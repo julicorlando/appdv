@@ -79,6 +79,8 @@ class PDVWindow(QMainWindow):
         self.status = QLabel("Conectando")
         self.refresh = QPushButton("Atualizar catálogo")
         self.refresh.clicked.connect(self._load_catalog)
+        self.web_orders = QPushButton("Pedidos confirmados")
+        self.web_orders.clicked.connect(self._review_web_orders)
         self.close_cash = QPushButton("Fechar caixa")
         self.close_cash.clicked.connect(self._close_cash)
         self.cancel_sale = QPushButton("Cancelar venda…")
@@ -87,6 +89,7 @@ class PDVWindow(QMainWindow):
         header.addWidget(self.company, 1)
         header.addWidget(self.status)
         header.addWidget(self.refresh)
+        header.addWidget(self.web_orders)
         header.addWidget(self.close_cash)
         header.addWidget(self.cancel_sale)
         layout.addLayout(header)
@@ -309,6 +312,8 @@ class PDVWindow(QMainWindow):
         if not ok or len(telefone) < 10:
             QMessageBox.warning(self, "Telefone inválido", "Informe um número com DDD.")
             return
+        if len(telefone) in (10, 11):
+            telefone = "55" + telefone
         itens = [
             {"produto": product_id, "quantidade": str(item["quantidade"])}
             for product_id, item in self.cart.items()
@@ -392,6 +397,59 @@ class PDVWindow(QMainWindow):
             self._load_catalog()
         except Exception as exc:
             QMessageBox.critical(self, "Cancelamento recusado", str(exc))
+
+    def _review_web_orders(self):
+        if not self.tenant_id:
+            return
+        try:
+            pedidos = [
+                pedido for pedido in self.api.pedidos_web()
+                if pedido.get("estado") in ("CONFIRMADO", "SEPARANDO")
+            ]
+        except Exception as exc:
+            QMessageBox.critical(self, "Pedidos web", f"Não foi possível consultar os pedidos: {exc}")
+            return
+        if not pedidos:
+            QMessageBox.information(self, "Pedidos web", "Não há pedidos confirmados aguardando atendimento.")
+            return
+        opcoes = [
+            f"Pedido #{p['id']} · {p['cliente_nome']} · R$ {Decimal(str(p['total'])):.2f} · {p['estado']}"
+            for p in pedidos
+        ]
+        selecionado, ok = QInputDialog.getItem(
+            self, "Pedidos confirmados", "Selecione o pedido para concluir no caixa:", opcoes, 0, False
+        )
+        if not ok:
+            return
+        pedido = pedidos[opcoes.index(selecionado)]
+        resumo = "\n".join(
+            f"{item['quantidade']} × {item['nome']} — R$ {Decimal(str(item['total'])):.2f}"
+            for item in pedido["itens"]
+        )
+        total = Decimal(str(pedido["total"]))
+        confirm = QMessageBox.question(
+            self, f"Finalizar pedido #{pedido['id']}",
+            f"Cliente: {pedido['cliente_nome']}\n\n{resumo}\n\n"
+            f"Total: R$ {total:.2f}\nPagamento: {self.payment.currentText()}\n\n"
+            "Confirmar recebimento e registrar a venda? O estoque será baixado.",
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        if not self.cash_id:
+            QMessageBox.warning(self, "Caixa fechado", "Abra o caixa para finalizar este pedido.")
+            return
+        try:
+            result = self.api.finalizar_pedido_web(
+                pedido["id"], self.cash_id,
+                [{"meio": self.payment.currentText(), "valor": str(total)}],
+            )
+            QMessageBox.information(
+                self, "Venda concluída",
+                f"Pedido #{pedido['id']} finalizado como venda #{result['venda_id']}."
+            )
+            self._load_catalog()
+        except Exception as exc:
+            QMessageBox.critical(self, "Não foi possível finalizar", str(exc))
 
     def _close_cash(self):
         if not self.cash_id:
