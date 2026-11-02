@@ -265,9 +265,10 @@ def empresa_vendas(request, empresa_id):
     membro = require_membership(request, empresa_id)
     vendas = Venda.objects.filter(empresa=membro.empresa).select_related(
         "operador", "caixa"
-    ).prefetch_related("itens__produto", "transacoes").order_by("-realizada_em")[:100]
+    ).prefetch_related("itens__produto", "transacoes").order_by("-realizada_em")
     if membro.papel == MembroEmpresa.Papel.CAIXA:
         vendas = vendas.filter(operador=request.user)
+    vendas = vendas[:100]
     return render(request, "empresa_vendas.html", {
         "empresa": membro.empresa, "membro": membro, "vendas": vendas,
     })
