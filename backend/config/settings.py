@@ -33,12 +33,14 @@ TEMPLATES = [{
 }]
 WSGI_APPLICATION = "config.wsgi.application"
 _db = os.getenv("DATABASE_URL", "")
-if _db.startswith("postgres://") or _db.startswith("postgresql://"):
+if _db.startswith(("postgres://", "postgresql://")):
     import urllib.parse
-    u = urllib.parse.urlparse(_db)
-    DATABASES = {"default": {"ENGINE": "django.db.backends.postgresql", "NAME": u.path.lstrip("/"),
-        "USER": u.username, "PASSWORD": u.password, "HOST": u.hostname, "PORT": u.port or 5432,
-        "OPTIONS": {"sslmode": "require"} if os.getenv("DB_SSL", "false").lower() == "true" else {}}}
+    parsed = urllib.parse.urlparse(_db)
+    query = urllib.parse.parse_qs(parsed.query)
+    DATABASES = {"default": {"ENGINE": "django.db.backends.postgresql",
+        "NAME": parsed.path.lstrip("/"), "USER": parsed.username, "PASSWORD": parsed.password,
+        "HOST": parsed.hostname, "PORT": parsed.port or 5432,
+        "OPTIONS": {"sslmode": query.get("sslmode", [os.getenv("DB_SSLMODE", "prefer")])[0]}}}
 else:
     DATABASES = {"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": BASE_DIR / "db.sqlite3"}}
 AUTH_PASSWORD_VALIDATORS = [
@@ -51,8 +53,12 @@ LANGUAGE_CODE = "pt-br"
 TIME_ZONE = "America/Sao_Paulo"
 USE_I18N = True
 USE_TZ = True
-STATIC_URL = "static/"
+STATIC_URL = "/static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+LOGIN_URL = "/accounts/login/"
+LOGIN_REDIRECT_URL = "/"
+LOGOUT_REDIRECT_URL = "/accounts/login/"
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": ["rest_framework_simplejwt.authentication.JWTAuthentication"],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
