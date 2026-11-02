@@ -10,7 +10,7 @@ class ProdutoSerializer(serializers.ModelSerializer):
     categoria_nome = serializers.CharField(source="categoria.nome", read_only=True)
     class Meta:
         model = Produto
-        fields = ("id", "categoria", "categoria_nome", "codigo", "codigo_barras", "nome", "unidade",
+        fields = ("id", "categoria", "categoria_nome", "codigo", "codigo_barras", "nome", "unidade", "setor", "endereco",
                   "preco_venda", "estoque_atual", "estoque_minimo", "ativo", "atualizado_em")
         read_only_fields = ("estoque_atual", "atualizado_em")
 
