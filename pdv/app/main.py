@@ -4,19 +4,29 @@ import socket
 import sys
 import uuid
 from decimal import Decimal
-from pathlib import Path\nfrom PySide6.QtGui import QIcon\nfrom PySide6.QtWidgets import (
+from pathlib import Path
+
+from PySide6.QtGui import QIcon
+from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout,
-    QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton, QTableWidget,
-    QTableWidgetItem, QVBoxLayout, QWidget, QInputDialog,
+    QInputDialog, QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton,
+    QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
+
 from app.api_client import ArmazemAPI
 from app.local_store import LocalStore
 
 
-def asset_path(name):\n    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))\n    return str(base / "assets" / name)\n\n\nclass LoginDialog(QDialog):
+def asset_path(name):
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
+    return str(base / "assets" / name)
+
+
+class LoginDialog(QDialog):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Conectar ao ApPdv")\n        self.setWindowIcon(QIcon(asset_path("appdv-icon-256.png")))
+        self.setWindowTitle("Conectar ao ApPdv")
+        self.setWindowIcon(QIcon(asset_path("appdv-icon-256.png")))
         self.api = None
         layout = QFormLayout(self)
         self.url = QLineEdit(os.getenv("APPDV_API_URL", "http://127.0.0.1:8000"))
@@ -26,7 +36,9 @@ def asset_path(name):\n    base = Path(getattr(sys, "_MEIPASS", Path(__file__).r
         layout.addRow("Endereço do servidor", self.url)
         layout.addRow("Usuário", self.username)
         layout.addRow("Senha", self.password)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
         buttons.accepted.connect(self.authenticate)
         buttons.rejected.connect(self.reject)
         layout.addRow(buttons)
@@ -49,7 +61,8 @@ class PDVWindow(QMainWindow):
         self.cart = {}
         self.cash_id = None
         self.tenant_id = None
-        self.setWindowTitle("ApPdv — Frente de Caixa")\n        self.setWindowIcon(QIcon(asset_path("appdv-icon-256.png")))
+        self.setWindowTitle("ApPdv — Frente de Caixa")
+        self.setWindowIcon(QIcon(asset_path("appdv-icon-256.png")))
         self.resize(1120, 740)
         self._build()
         self._select_company()
@@ -64,11 +77,11 @@ class PDVWindow(QMainWindow):
         self.refresh.clicked.connect(self._load_catalog)
         self.close_cash = QPushButton("Fechar caixa")
         self.close_cash.clicked.connect(self._close_cash)
-        header.addWidget(self.close_cash)
         header.addWidget(QLabel("Empresa"))
         header.addWidget(self.company, 1)
         header.addWidget(self.status)
         header.addWidget(self.refresh)
+        header.addWidget(self.close_cash)
         layout.addLayout(header)
 
         search = QHBoxLayout()
@@ -81,8 +94,10 @@ class PDVWindow(QMainWindow):
         search.addWidget(add)
         layout.addLayout(search)
 
-        self.catalog = QTableWidget(0, 4)
-        self.catalog.setHorizontalHeaderLabels(["Código", "Produto", "Un.", "Preço"])
+        self.catalog = QTableWidget(0, 5)
+        self.catalog.setHorizontalHeaderLabels(
+            ["Código", "Produto", "Setor", "Endereço", "Preço"]
+        )
         self.catalog.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.catalog.cellDoubleClicked.connect(self._add_selected)
         layout.addWidget(self.catalog, 3)
@@ -109,14 +124,15 @@ class PDVWindow(QMainWindow):
     def _select_company(self):
         try:
             companies = self.api.minhas_empresas()
-            self.company.clear()
             for company in companies:
                 self.company.addItem(company["nome"], company["id"])
             self.company.currentIndexChanged.connect(self._company_changed)
             if companies:
                 self._company_changed(0)
             else:
-                QMessageBox.warning(self, "Sem acesso", "Sua conta não está vinculada a nenhuma empresa.")
+                QMessageBox.warning(
+                    self, "Sem acesso", "Sua conta não está vinculada a nenhuma empresa."
+                )
         except Exception as exc:
             QMessageBox.critical(self, "Falha de conexão", str(exc))
 
@@ -126,10 +142,13 @@ class PDVWindow(QMainWindow):
         self.tenant_id = str(self.company.currentData())
         self.api.selecionar_empresa(self.tenant_id)
         self.cart.clear()
+        saldo, accepted = QInputDialog.getDouble(
+            self, "Abertura do caixa", "Saldo inicial em dinheiro (R$):",
+            0.00, 0.00, 10000000.00, 2,
+        )
+        if not accepted:
+            return
         try:
-            saldo, accepted = QInputDialog.getDouble(self, "Abertura do caixa", "Saldo inicial em dinheiro (R$):", 0.00, 0.00, 10000000.00, 2)
-            if not accepted:
-                return
             caixa = self.api.abrir_caixa(socket.gethostname(), saldo)
             self.cash_id = caixa["id"]
             self.status.setText("Caixa aberto · online")
@@ -155,8 +174,11 @@ class PDVWindow(QMainWindow):
     def _render_catalog(self):
         self.catalog.setRowCount(len(self.products))
         for row, product in enumerate(self.products):
-            values = [product.get("codigo", ""), product.get("nome", ""),
-                      product.get("unidade", ""), f"R$ {Decimal(str(product.get('preco_venda', 0))):.2f}"]
+            values = [
+                product.get("codigo", ""), product.get("nome", ""),
+                product.get("setor", ""), product.get("endereco", ""),
+                f"R$ {Decimal(str(product.get('preco_venda', 0))):.2f}",
+            ]
             for col, value in enumerate(values):
                 self.catalog.setItem(row, col, QTableWidgetItem(str(value)))
         self.catalog.resizeColumnsToContents()
@@ -165,26 +187,35 @@ class PDVWindow(QMainWindow):
         query = self.query.text().strip().lower()
         if not query:
             return
-        product = next((p for p in self.products if query in
-                        (str(p.get("codigo", "")).lower(), str(p.get("codigo_barras", "")).lower())), None)
+        product = next(
+            (p for p in self.products if query in (
+                str(p.get("codigo", "")).lower(),
+                str(p.get("codigo_barras", "")).lower(),
+            )),
+            None,
+        )
         if product:
             self._add_product(product)
             self.query.clear()
         else:
-            QMessageBox.information(self, "Produto não localizado", "Atualize o catálogo ou confira o código.")
+            QMessageBox.information(
+                self, "Produto não localizado", "Atualize o catálogo ou confira o código."
+            )
 
     def _add_selected(self, row, _column):
         if row < len(self.products):
             self._add_product(self.products[row])
 
     def _add_product(self, product):
-        pid = int(product["id"])
+        product_id = int(product["id"])
         available = Decimal(str(product.get("estoque_atual", "0")))
-        qty = self.cart.get(pid, {}).get("quantidade", Decimal("0")) + Decimal("1")
-        if qty > available:
-            QMessageBox.warning(self, "Estoque", "A quantidade excede o saldo disponível no último catálogo.")
+        quantity = self.cart.get(product_id, {}).get("quantidade", Decimal("0")) + Decimal("1")
+        if quantity > available:
+            QMessageBox.warning(
+                self, "Estoque", "A quantidade excede o saldo disponível no último catálogo."
+            )
             return
-        self.cart[pid] = {"produto": product, "quantidade": qty}
+        self.cart[product_id] = {"produto": product, "quantidade": quantity}
         self._render_cart()
 
     def _render_cart(self):
@@ -192,11 +223,15 @@ class PDVWindow(QMainWindow):
         self.cart_table.setRowCount(len(rows))
         total = Decimal("0")
         for row, item in enumerate(rows):
-            product, qty = item["produto"], item["quantidade"]
+            product, quantity = item["produto"], item["quantidade"]
             price = Decimal(str(product["preco_venda"]))
-            line_total = qty * price
+            line_total = quantity * price
             total += line_total
-            for col, value in enumerate([product["nome"], str(qty), f"R$ {price:.2f}", f"R$ {line_total:.2f}"]):
+            values = [
+                product["nome"], str(quantity), f"R$ {price:.2f}",
+                f"R$ {line_total:.2f}",
+            ]
+            for col, value in enumerate(values):
                 self.cart_table.setItem(row, col, QTableWidgetItem(str(value)))
         self.total.setText(f"Total: R$ {total:.2f}")
 
@@ -206,35 +241,51 @@ class PDVWindow(QMainWindow):
             return
         if not self.cart:
             return
-        total = sum((Decimal(str(item["produto"]["preco_venda"])) * item["quantidade"]
-                     for item in self.cart.values()), Decimal("0")).quantize(Decimal("0.01"))
+        total = sum(
+            (Decimal(str(item["produto"]["preco_venda"])) * item["quantidade"]
+             for item in self.cart.values()),
+            Decimal("0"),
+        ).quantize(Decimal("0.01"))
         key = str(uuid.uuid4())
         payload = {
-            "idempotency_key": key, "caixa": self.cash_id, "observacao": "",
-            "itens": [{"produto": pid, "quantidade": str(item["quantidade"]), "desconto": "0"}
-                      for pid, item in self.cart.items()],
-            "pagamentos": [{"meio": self.payment.currentText(), "valor": str(total)}],
+            "idempotency_key": key,
+            "caixa": self.cash_id,
+            "observacao": "",
+            "itens": [
+                {"produto": product_id, "quantidade": str(item["quantidade"]), "desconto": "0"}
+                for product_id, item in self.cart.items()
+            ],
+            "pagamentos": [
+                {"meio": self.payment.currentText(), "valor": str(total)}
+            ],
         }
         try:
             response = self.api.registrar_venda(payload)
-            QMessageBox.information(self, "Venda concluída", f"Venda #{response['id']} registrada.")
+            QMessageBox.information(
+                self, "Venda concluída", f"Venda #{response['id']} registrada no servidor."
+            )
             self.cart.clear()
             self._render_cart()
             self._load_catalog()
         except Exception as exc:
             self.store.queue_sale(self.tenant_id, payload, str(exc))
-            QMessageBox.warning(self, "Venda pendente",
+            QMessageBox.warning(
+                self, "Venda pendente",
                 "O servidor não confirmou a venda. Ela foi guardada neste computador para sincronização. "
-                "A sincronização só será aceita se caixa, estoque e valores continuarem válidos.\n\n" + str(exc))
+                "A sincronização exige caixa, estoque e valores válidos.\n\n" + str(exc),
+            )
 
     def _close_cash(self):
         if not self.cash_id:
             return
-        saldo, accepted = QInputDialog.getDouble(self, "Fechamento do caixa", "Valor contado em dinheiro (R$):", 0.00, 0.00, 10000000.00, 2)
+        amount, accepted = QInputDialog.getDouble(
+            self, "Fechamento do caixa", "Valor contado em dinheiro (R$):",
+            0.00, 0.00, 10000000.00, 2,
+        )
         if not accepted:
             return
         try:
-            self.api.fechar_caixa(self.cash_id, saldo)
+            self.api.fechar_caixa(self.cash_id, amount)
             QMessageBox.information(self, "Caixa fechado", "O caixa foi encerrado no servidor.")
             self.cash_id = None
             self.status.setText("Caixa fechado")
@@ -257,10 +308,11 @@ class PDVWindow(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
-    dialog = LoginDialog()
-    if dialog.exec() != QDialog.DialogCode.Accepted:
+    app.setWindowIcon(QIcon(asset_path("appdv-icon-256.png")))
+    login = LoginDialog()
+    if login.exec() != QDialog.DialogCode.Accepted:
         return
-    window = PDVWindow(dialog.api)
+    window = PDVWindow(login.api)
     window.show()
     sys.exit(app.exec())
 
