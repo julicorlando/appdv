@@ -6,7 +6,7 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from .models import (
-    Caixa, ItemVenda, MovimentacaoEstoque, Produto, TokenAutorizacao,
+    Caixa, InventarioContagem, ItemContagem, ItemVenda, MovimentacaoEstoque, Produto, TokenAutorizacao,
     Transacao, Venda,
 )
 
@@ -48,6 +48,14 @@ def registrar_venda(*, empresa, usuario, dados):
             produto = Produto.objects.select_for_update().get(
                 pk=linha["produto"], empresa=empresa, ativo=True
             )
+            if ItemContagem.objects.filter(
+                contagem__empresa=empresa,
+                contagem__estado=InventarioContagem.Estado.ABERTO,
+                produto=produto,
+            ).exists():
+                raise ValidationError({
+                    "itens": f"{produto.nome} está em contagem física. Aguarde a conclusão do inventário."
+                })
             quantidade = Decimal(str(linha["quantidade"]))
             if not quantidade.is_finite() or quantidade <= 0:
                 raise ValueError
