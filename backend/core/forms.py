@@ -49,7 +49,7 @@ class CategoriaForm(forms.ModelForm):
 class ProdutoForm(forms.ModelForm):
     class Meta:
         model = Produto
-        fields = ("categoria", "codigo", "codigo_barras", "nome", "unidade",
+        fields = ("categoria", "codigo", "codigo_barras", "nome", "unidade", "setor", "endereco",
                   "preco_venda", "custo_medio", "estoque_minimo")
         widgets = {
             "preco_venda": forms.NumberInput(attrs={"step": "0.01"}),
