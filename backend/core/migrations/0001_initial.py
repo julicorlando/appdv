@@ -143,7 +143,7 @@ class Migration(migrations.Migration):
         migrations.AddConstraint(model_name="membroempresa", constraint=models.UniqueConstraint(fields=("empresa", "usuario"), name="uniq_usuario_empresa")),
         migrations.AddConstraint(model_name="categoria", constraint=models.UniqueConstraint(fields=("empresa", "nome"), name="uniq_categoria_empresa")),
         migrations.AddConstraint(model_name="produto", constraint=models.UniqueConstraint(fields=("empresa", "codigo"), name="uniq_codigo_produto_empresa")),
-        migrations.AddIndex(model_name="produto", index=models.Index(fields=["empresa", "nome"], name="core_produt_empresa_07")),
-        migrations.AddIndex(model_name="produto", index=models.Index(fields=["empresa", "codigo_barras"], name="core_produt_empresa_08")),
+        migrations.AddIndex(model_name="produto", index=models.Index(fields=["empresa", "nome"], name="prod_tenant_name_idx")),
+        migrations.AddIndex(model_name="produto", index=models.Index(fields=["empresa", "codigo_barras"], name="prod_tenant_barcode_idx")),
         migrations.AddConstraint(model_name="venda", constraint=models.UniqueConstraint(fields=("empresa", "idempotency_key"), name="uniq_idempotency_empresa")),
     ]
