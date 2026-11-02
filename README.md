@@ -8,7 +8,7 @@ Sistema multi-tenant para gestão de materiais de construção: backend Django/D
 - **Painel da empresa**: catálogo, setores e endereços, estoque, vendas e movimentações, autorizações temporárias e inventário preventivo.
 - **Auditoria de estoque**: consulte entradas, vendas, devoluções e ajustes por produto, referência, empresa e operador.\n- **Importação Excel**: baixe o modelo na tela de produtos. A planilha atualiza produtos pelo código e o `estoque_atual` substitui o saldo do cadastro. Cada diferença fica no histórico. Arquivos .xlsx até 5 MB e 5.000 linhas.
 - **Inventário preventivo**: sorteia dias úteis e setores entre os próximos 30 dias; no dia sorteado, escolhe produtos aleatórios do setor. Durante a contagem física, as vendas dos produtos daquela amostra são pausadas. A reconciliação registra ajustes auditáveis.
-- **PDV desktop**: login via API, seleção de empresa, busca por código/código de barras, abertura e fechamento de caixa, venda com estoque no servidor, cancelamento com token de gerente e fila local idempotente para falhas de conexão.
+- **PDV desktop**: login via API, seleção de empresa, busca por código/código de barras, abertura e fechamento de caixa, venda com estoque no servidor, cancelamento com token de gerente, cupom interno em TXT e fila local idempotente para falhas de conexão.
 - **Cupom interno**: vendas são registradas no servidor; emissão fiscal NF-e/NFC-e depende da configuração de provedor e certificado, ainda não habilitada neste scaffold.
 
 ## Isolamento por empresa
@@ -40,7 +40,7 @@ Entre em `http://127.0.0.1:8000/master/` com a conta superusuária para cadastra
 
 ## PDV Windows
 
-No Windows, instale Python 3.10+ e execute `pdv/build_windows.bat`. O PyInstaller gera `pdv/dist/ApPdv.exe` com os ícones e o logo do kit. Configure `APPDV_API_URL` ou informe o endereço do servidor na tela de login.
+No Windows, instale Python 3.10+ e execute `pdv/build_windows.bat`. O PyInstaller gera `pdv/dist/ApPdv.exe` com o ícone do kit. Com Inno Setup (`ISCC.exe`) instalado, o mesmo script também gera `pdv/dist/installer/ApPdv-Setup.exe`. Configure `APPDV_API_URL` ou informe o endereço do servidor na tela de login.
 
 ```bash
 cd pdv
