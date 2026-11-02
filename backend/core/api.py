@@ -92,6 +92,7 @@ class VendaViewSet(viewsets.GenericViewSet, mixins.ListModelMixin, mixins.Retrie
         venda = cancelar_venda(
             empresa=empresa, usuario=request.user, venda_id=pk,
             codigo=request.data.get("token", ""),
+            justificativa=request.data.get("justificativa", ""),
         )
         return Response(VendaSerializer(venda).data)
 
@@ -102,6 +103,7 @@ class VendaViewSet(viewsets.GenericViewSet, mixins.ListModelMixin, mixins.Retrie
             empresa=empresa, usuario=request.user, venda_id=pk,
             codigo=request.data.get("token", ""),
             acao=TokenAutorizacao.Acao.ESTORNAR,
+            justificativa=request.data.get("justificativa", ""),
         )
         return Response(VendaSerializer(venda).data)
 
@@ -114,6 +116,7 @@ class VendaViewSet(viewsets.GenericViewSet, mixins.ListModelMixin, mixins.Retrie
                 empresa=empresa, usuario=request.user, venda_id=pk,
                 codigo=request.data.get("token", ""),
                 acao=TokenAutorizacao.Acao.TROCAR,
+                justificativa=request.data.get("justificativa", ""),
             )
             nova, criada = registrar_venda(
                 empresa=empresa, usuario=request.user, dados=request.data.get("nova_venda", {}),
