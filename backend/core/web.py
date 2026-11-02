@@ -5,12 +5,12 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.db import transaction
-from django.db.models import Count, Sum
+from django.db.models import Count, Sum, F
 from django.http import HttpResponseNotAllowed
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.utils.text import slugify
-from .forms import EmpresaForm, MembroForm, ProdutoForm
+from .forms import CategoriaSimpleForm, EmpresaForm, MembroForm, ProdutoForm
 from .models import Categoria, Empresa, MembroEmpresa, Produto, TokenAutorizacao, Venda
 
 User = get_user_model()
@@ -134,11 +134,12 @@ def empresa_dashboard(request, empresa_id):
         "membro": membro, "empresa": membro.empresa,
         "produtos_count": Produto.objects.filter(empresa=membro.empresa, ativo=True).count(),
         "estoque_baixo": Produto.objects.filter(
-            empresa=membro.empresa, ativo=True, estoque_atual__lte=__import__("django.db.models", fromlist=["F"]).F("estoque_minimo")
+            empresa=membro.empresa, ativo=True, estoque_atual__lte=F("estoque_minimo")
         ).count(),
         "vendas_count": vendas.count(),
         "faturamento_hoje": vendas.aggregate(total=Sum("total"))["total"] or Decimal("0.00"),
         "membros": MembroEmpresa.objects.filter(empresa=membro.empresa, ativo=True).select_related("usuario"),
+        "now": timezone.now(),
     })
 
 
@@ -194,3 +195,49 @@ def empresa_autorizacao(request, empresa_id):
         "membro": membro, "empresa": membro.empresa, "tokens": tokens,
         "token_texto": token_texto, "acoes": TokenAutorizacao.Acao.choices,
     })
+
+@login_required
+def empresa_categoria(request, empresa_id):
+    membro = require_membership(
+        request, empresa_id, (MembroEmpresa.Papel.ADMIN, MembroEmpresa.Papel.GERENTE)
+    )
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    form = CategoriaSimpleForm(request.POST)
+    if form.is_valid():
+        categoria = form.save(commit=False)
+        categoria.empresa = membro.empresa
+        try:
+            categoria.save()
+            messages.success(request, "Categoria cadastrada.")
+        except Exception:
+            messages.error(request, "Já existe uma categoria com esse nome nesta empresa.")
+    else:
+        messages.error(request, "Informe um nome de categoria válido.")
+    return redirect("empresa-produtos", empresa_id=empresa_id)
+
+
+@login_required
+def empresa_entrada_estoque(request, empresa_id, produto_id):
+    from django.db import transaction
+    from decimal import Decimal, InvalidOperation
+    membro = require_membership(
+        request, empresa_id, (MembroEmpresa.Papel.ADMIN, MembroEmpresa.Papel.GERENTE)
+    )
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    try:
+        quantidade = Decimal(str(request.POST.get("quantidade", "")))
+        if not quantidade.is_finite() or quantidade <= 0:
+            raise ValueError
+    except (ValueError, TypeError, InvalidOperation):
+        messages.error(request, "Informe uma quantidade positiva válida.")
+        return redirect("empresa-produtos", empresa_id=empresa_id)
+    with transaction.atomic():
+        produto = get_object_or_404(
+            Produto.objects.select_for_update(), pk=produto_id, empresa=membro.empresa
+        )
+        produto.estoque_atual += quantidade
+        produto.save(update_fields=("estoque_atual", "atualizado_em"))
+    messages.success(request, f"Entrada de {quantidade} {produto.unidade} registrada para {produto.nome}.")
+    return redirect("empresa-produtos", empresa_id=empresa_id)
