@@ -6,7 +6,7 @@ Sistema multi-tenant para gestão de materiais de construção: backend Django/D
 
 - **Painel Master** em `/master/`: cadastro e suspensão de empresas, primeiro administrador por empresa e criação/vinculação de usuários e perfis.
 - **Painel da empresa**: catálogo, setores e endereços, estoque, vendas e movimentações, autorizações temporárias e inventário preventivo.
-- **Importação Excel**: baixe o modelo na tela de produtos. A planilha atualiza produtos pelo código e o `estoque_atual` substitui o saldo do cadastro. Cada diferença fica no histórico. Arquivos .xlsx até 5 MB e 5.000 linhas.
+- **Auditoria de estoque**: consulte entradas, vendas, devoluções e ajustes por produto, referência, empresa e operador.\n- **Importação Excel**: baixe o modelo na tela de produtos. A planilha atualiza produtos pelo código e o `estoque_atual` substitui o saldo do cadastro. Cada diferença fica no histórico. Arquivos .xlsx até 5 MB e 5.000 linhas.
 - **Inventário preventivo**: sorteia dias úteis e setores entre os próximos 30 dias; no dia sorteado, escolhe produtos aleatórios do setor. Durante a contagem física, as vendas dos produtos daquela amostra são pausadas. A reconciliação registra ajustes auditáveis.
 - **PDV desktop**: login via API, seleção de empresa, busca por código/código de barras, abertura e fechamento de caixa, venda com estoque no servidor, cancelamento com token de gerente e fila local idempotente para falhas de conexão.
 - **Cupom interno**: vendas são registradas no servidor; emissão fiscal NF-e/NFC-e depende da configuração de provedor e certificado, ainda não habilitada neste scaffold.
@@ -20,17 +20,21 @@ O banco é compartilhado, mas cada empresa tem catálogo, estoque, caixas, venda
 Com Docker Desktop e Python 3.10+:
 
 ```bash
-docker compose up -d db
 cd backend
 python -m venv .venv
 # Windows: .venv\Scripts\activate
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
+cd ..
+docker compose up -d db
+cd backend
 python manage.py migrate
 python manage.py createsuperuser
 python manage.py runserver
 ```
+
+Para executar também o backend em container, copie primeiro `backend/.env.example` para `backend/.env`, ajuste `SECRET_KEY` e execute `docker compose up --build`. No container, o Compose aponta o backend para o serviço PostgreSQL `db`.
 
 Entre em `http://127.0.0.1:8000/master/` com a conta superusuária para cadastrar a primeira empresa e os usuários. O painel técnico Django fica em `/admin/`.
 
