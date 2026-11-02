@@ -95,6 +95,16 @@ class VendaViewSet(viewsets.GenericViewSet, mixins.ListModelMixin, mixins.Retrie
         )
         return Response(VendaSerializer(venda).data)
 
+    @action(detail=True, methods=["post"], url_path="estornar")
+    def estornar(self, request, pk=None):
+        empresa = self.get_empresa()
+        venda = cancelar_venda(
+            empresa=empresa, usuario=request.user, venda_id=pk,
+            codigo=request.data.get("token", ""),
+            acao=TokenAutorizacao.Acao.ESTORNAR,
+        )
+        return Response(VendaSerializer(venda).data)
+
     @action(detail=True, methods=["post"], url_path="trocar")
     def trocar(self, request, pk=None):
         from django.db import transaction
@@ -117,17 +127,22 @@ class AbrirCaixaView(TenantAPIView):
     def post(self, request):
         from .models import Caixa
         empresa, membro = self.get_empresa(request)
-        if Caixa.objects.filter(empresa=empresa, operador=request.user, estado=Caixa.Estado.ABERTO).exists():
-            raise ValidationError({"caixa": "Este operador já possui caixa aberto nesta empresa."})
         try:
             saldo = request.data.get("saldo_abertura", "0")
             dispositivo = str(request.data["dispositivo_id"])[:100]
             from decimal import Decimal
             saldo = Decimal(str(saldo))
-            if not saldo.is_finite() or saldo < 0:
+            if not saldo.is_finite() or saldo < 0 or not dispositivo:
                 raise ValueError
         except (KeyError, ValueError, TypeError):
             raise ValidationError({"caixa": "Informe dispositivo e saldo de abertura válidos."})
+        existente = Caixa.objects.filter(
+            empresa=empresa, operador=request.user, estado=Caixa.Estado.ABERTO
+        ).first()
+        if existente:
+            if existente.dispositivo_id == dispositivo:
+                return Response({"id": existente.pk, "estado": existente.estado})
+            raise ValidationError({"caixa": "Este operador já possui caixa aberto em outro dispositivo."})
         caixa = Caixa.objects.create(
             empresa=empresa, operador=request.user, dispositivo_id=dispositivo, saldo_abertura=saldo,
         )
@@ -171,6 +186,8 @@ class CriarTokenView(TenantAPIView):
         permitidas = TokenAutorizacao.Acao.values
         if acao not in permitidas:
             raise ValidationError({"acao": "Ação de autorização inválida."})
+        if not venda_id:
+            raise ValidationError({"venda": "A autorização precisa estar vinculada a uma venda."})
         venda = None
         if venda_id:
             try:
