@@ -11,7 +11,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.utils.text import slugify
 from .forms import CategoriaSimpleForm, EmpresaForm, MembroForm, ProdutoForm
-from .models import Categoria, Empresa, MembroEmpresa, Produto, TokenAutorizacao, Venda
+from .models import Categoria, Empresa, MembroEmpresa, MovimentacaoEstoque, Produto, TokenAutorizacao, Venda
 
 User = get_user_model()
 
@@ -172,14 +172,15 @@ def empresa_autorizacao(request, empresa_id):
         if acao not in TokenAutorizacao.Acao.values:
             messages.error(request, "Selecione uma operação válida.")
         else:
-            venda = None
             raw_venda = request.POST.get("venda", "").strip()
-            if raw_venda:
-                try:
-                    venda = Venda.objects.get(pk=int(raw_venda), empresa=membro.empresa)
-                except (ValueError, Venda.DoesNotExist):
-                    messages.error(request, "Venda não encontrada nesta empresa.")
-                    return redirect("empresa-autorizacao", empresa_id=empresa_id)
+            if not raw_venda:
+                messages.error(request, "Informe a venda à qual o token ficará vinculado.")
+                return redirect("empresa-autorizacao", empresa_id=empresa_id)
+            try:
+                venda = Venda.objects.get(pk=int(raw_venda), empresa=membro.empresa)
+            except (ValueError, Venda.DoesNotExist):
+                messages.error(request, "Venda não encontrada nesta empresa.")
+                return redirect("empresa-autorizacao", empresa_id=empresa_id)
             token_texto = TokenAutorizacao.gerar_codigo()
             TokenAutorizacao.objects.create(
                 empresa=membro.empresa,
@@ -241,3 +242,16 @@ def empresa_entrada_estoque(request, empresa_id, produto_id):
         produto.save(update_fields=("estoque_atual", "atualizado_em"))
     messages.success(request, f"Entrada de {quantidade} {produto.unidade} registrada para {produto.nome}.")
     return redirect("empresa-produtos", empresa_id=empresa_id)
+
+
+@login_required
+def empresa_vendas(request, empresa_id):
+    membro = require_membership(request, empresa_id)
+    vendas = Venda.objects.filter(empresa=membro.empresa).select_related(
+        "operador", "caixa"
+    ).prefetch_related("itens__produto", "transacoes").order_by("-realizada_em")[:100]
+    if membro.papel == MembroEmpresa.Papel.CAIXA:
+        vendas = vendas.filter(operador=request.user)
+    return render(request, "empresa_vendas.html", {
+        "empresa": membro.empresa, "membro": membro, "vendas": vendas,
+    })
