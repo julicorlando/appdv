@@ -1,4 +1,5 @@
 from datetime import date
+from io import BytesIO
 from decimal import Decimal, InvalidOperation
 from django.contrib import messages
 from django.contrib.auth import get_user_model
@@ -6,12 +7,13 @@ from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.db import transaction
 from django.db.models import Count, Sum, F
-from django.http import HttpResponseNotAllowed
+from django.http import HttpResponse, HttpResponseNotAllowed
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.utils.text import slugify
 from .forms import CategoriaSimpleForm, EmpresaForm, MembroForm, ProdutoForm
-from .models import Categoria, Empresa, MembroEmpresa, MovimentacaoEstoque, Produto, TokenAutorizacao, Venda
+from .inventory import concluir_contagem, gerar_contagens_aleatorias, importar_planilha, iniciar_contagem
+from .models import Categoria, Empresa, InventarioContagem, ItemContagem, MembroEmpresa, MovimentacaoEstoque, Produto, TokenAutorizacao, Venda
 
 User = get_user_model()
 
@@ -261,4 +263,122 @@ def empresa_vendas(request, empresa_id):
         vendas = vendas.filter(operador=request.user)
     return render(request, "empresa_vendas.html", {
         "empresa": membro.empresa, "membro": membro, "vendas": vendas,
+    })
+
+
+@login_required
+def baixar_modelo_planilha(request, empresa_id):
+    require_membership(
+        request, empresa_id, (MembroEmpresa.Papel.ADMIN, MembroEmpresa.Papel.GERENTE)
+    )
+    from openpyxl import Workbook
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Produtos"
+    sheet.append([
+        "codigo", "nome", "categoria", "unidade", "preco_venda",
+        "estoque_atual", "estoque_minimo", "setor", "endereco", "codigo_barras",
+    ])
+    sheet.append([
+        "MAT-001", "Cimento CP-II 50kg", "Cimento", "SC", 34.90, 120,
+        20, "Depósito A", "A-03-02", "7890000000000",
+    ])
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = sheet.dimensions
+    for cell in sheet[1]:
+        cell.font = __import__("openpyxl").styles.Font(bold=True)
+    for column, width in {
+        "A": 18, "B": 30, "C": 22, "D": 12, "E": 16,
+        "F": 16, "G": 16, "H": 20, "I": 18, "J": 20,
+    }.items():
+        sheet.column_dimensions[column].width = width
+    output = BytesIO()
+    workbook.save(output)
+    response = HttpResponse(
+        output.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = 'attachment; filename="modelo_importacao_armazem.xlsx"'
+    return response
+
+
+@login_required
+def importar_produtos_excel(request, empresa_id):
+    membro = require_membership(
+        request, empresa_id, (MembroEmpresa.Papel.ADMIN, MembroEmpresa.Papel.GERENTE)
+    )
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    arquivo = request.FILES.get("arquivo")
+    if not arquivo:
+        messages.error(request, "Selecione um arquivo .xlsx.")
+        return redirect("empresa-produtos", empresa_id=empresa_id)
+    try:
+        resultado = importar_planilha(empresa=membro.empresa, usuario=request.user, arquivo=arquivo)
+    except Exception as exc:
+        messages.error(request, str(exc))
+        return redirect("empresa-produtos", empresa_id=empresa_id)
+    messages.success(
+        request,
+        f"Importação {resultado['lote']} concluída: {resultado['criados']} novos e "
+        f"{resultado['atualizados']} atualizados. Estoques e endereços foram aplicados.",
+    )
+    return redirect("empresa-produtos", empresa_id=empresa_id)
+
+
+@login_required
+def empresa_inventario(request, empresa_id):
+    membro = require_membership(
+        request, empresa_id, (MembroEmpresa.Papel.ADMIN, MembroEmpresa.Papel.GERENTE)
+    )
+    if request.method == "POST":
+        acao = request.POST.get("acao")
+        try:
+            if acao == "gerar":
+                quantidade = int(request.POST.get("quantidade", "5"))
+                por_contagem = int(request.POST.get("itens_por_contagem", "20"))
+                if quantidade > 100 or por_contagem > 200:
+                    raise ValueError("Limite: até 100 sessões e 200 produtos por sessão.")
+                geradas = gerar_contagens_aleatorias(
+                    empresa=membro.empresa, usuario=request.user,
+                    quantidade=quantidade, itens_por_contagem=por_contagem,
+                )
+                messages.success(
+                    request, f"Foram sorteadas {len(geradas)} contagens entre setores e dias dos próximos 30 dias."
+                )
+            elif acao == "iniciar":
+                contagem = get_object_or_404(
+                    InventarioContagem, pk=request.POST.get("contagem"),
+                    empresa=membro.empresa,
+                )
+                iniciar_contagem(contagem=contagem, usuario=request.user)
+                messages.success(
+                    request, f"Contagem do setor {contagem.setor} iniciada. As vendas desses itens ficam pausadas até concluir."
+                )
+            elif acao == "concluir":
+                contagem = get_object_or_404(
+                    InventarioContagem, pk=request.POST.get("contagem"),
+                    empresa=membro.empresa,
+                )
+                valores = {
+                    key.removeprefix("contado_"): value
+                    for key, value in request.POST.items()
+                    if key.startswith("contado_")
+                }
+                concluir_contagem(contagem=contagem, usuario=request.user, contagens=valores)
+                messages.success(request, "Contagem concluída; diferenças aplicadas e registradas no histórico de estoque.")
+            else:
+                messages.error(request, "Ação de inventário inválida.")
+        except Exception as exc:
+            messages.error(request, str(exc))
+        return redirect("empresa-inventario", empresa_id=empresa_id)
+
+    contagens = InventarioContagem.objects.filter(empresa=membro.empresa).prefetch_related(
+        "itens__produto"
+    ).order_by("-data_programada", "-criado_em")
+    return render(request, "empresa_inventario.html", {
+        "empresa": membro.empresa, "membro": membro, "contagens": contagens,
+        "today": timezone.localdate(),
+        "setores": list(Produto.objects.filter(empresa=membro.empresa, ativo=True)
+                        .exclude(setor="").values_list("setor", flat=True).distinct()),
     })
