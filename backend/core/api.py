@@ -95,6 +95,23 @@ class VendaViewSet(viewsets.GenericViewSet, mixins.ListModelMixin, mixins.Retrie
         )
         return Response(VendaSerializer(venda).data)
 
+    @action(detail=True, methods=["post"], url_path="trocar")
+    def trocar(self, request, pk=None):
+        from django.db import transaction
+        empresa = self.get_empresa()
+        with transaction.atomic():
+            original = cancelar_venda(
+                empresa=empresa, usuario=request.user, venda_id=pk,
+                codigo=request.data.get("token", ""),
+                acao=TokenAutorizacao.Acao.TROCAR,
+            )
+            nova, criada = registrar_venda(
+                empresa=empresa, usuario=request.user, dados=request.data.get("nova_venda", {}),
+            )
+        return Response({"venda_cancelada": VendaSerializer(original).data,
+                         "nova_venda": VendaSerializer(nova).data},
+                        status=status.HTTP_201_CREATED if criada else status.HTTP_200_OK)
+
 
 class AbrirCaixaView(TenantAPIView):
     def post(self, request):
