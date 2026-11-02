@@ -271,7 +271,7 @@ def baixar_modelo_planilha(request, empresa_id):
     require_membership(
         request, empresa_id, (MembroEmpresa.Papel.ADMIN, MembroEmpresa.Papel.GERENTE)
     )
-    from openpyxl import Workbook
+    from openpyxl import Workbook\n    from openpyxl.styles import Font
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Produtos"
@@ -286,7 +286,7 @@ def baixar_modelo_planilha(request, empresa_id):
     sheet.freeze_panes = "A2"
     sheet.auto_filter.ref = sheet.dimensions
     for cell in sheet[1]:
-        cell.font = __import__("openpyxl").styles.Font(bold=True)
+        cell.font = Font(bold=True)
     for column, width in {
         "A": 18, "B": 30, "C": 22, "D": 12, "E": 16,
         "F": 16, "G": 16, "H": 20, "I": 18, "J": 20,
@@ -337,7 +337,7 @@ def empresa_inventario(request, empresa_id):
             if acao == "gerar":
                 quantidade = int(request.POST.get("quantidade", "5"))
                 por_contagem = int(request.POST.get("itens_por_contagem", "20"))
-                if quantidade > 100 or por_contagem > 200:
+                if quantidade < 1 or por_contagem < 1 or quantidade > 100 or por_contagem > 200:
                     raise ValueError("Limite: até 100 sessões e 200 produtos por sessão.")
                 geradas = gerar_contagens_aleatorias(
                     empresa=membro.empresa, usuario=request.user,
@@ -377,7 +377,10 @@ def empresa_inventario(request, empresa_id):
         "itens__produto"
     ).order_by("-data_programada", "-criado_em")
     return render(request, "empresa_inventario.html", {
-        "empresa": membro.empresa, "membro": membro, "contagens": contagens,
+        "empresa": membro.empresa, "membro": membro,
+        "programadas": contagens.filter(estado=InventarioContagem.Estado.PROGRAMADO),
+        "abertas": contagens.filter(estado=InventarioContagem.Estado.ABERTO),
+        "concluidas": contagens.filter(estado=InventarioContagem.Estado.CONCLUIDO),
         "today": timezone.localdate(),
         "setores": list(Produto.objects.filter(empresa=membro.empresa, ativo=True)
                         .exclude(setor="").values_list("setor", flat=True).distinct()),
