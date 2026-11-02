@@ -126,7 +126,7 @@ def registrar_venda(*, empresa, usuario, dados):
 
 @transaction.atomic
 def cancelar_venda(*, empresa, usuario, venda_id, codigo,
-                   acao=TokenAutorizacao.Acao.CANCELAR_VENDA):
+                   acao=TokenAutorizacao.Acao.CANCELAR_VENDA, justificativa=""):
     try:
         venda = Venda.objects.select_for_update().get(pk=venda_id, empresa=empresa)
     except (Venda.DoesNotExist, ValueError, TypeError):
@@ -147,7 +147,12 @@ def cancelar_venda(*, empresa, usuario, venda_id, codigo,
     token.usado_por = usuario
     token.save(update_fields=("usado_em", "usado_por"))
     venda.estado = Venda.Estado.CANCELADA
-    venda.save(update_fields=("estado",))
+    justificativa = str(justificativa).strip()[:500]
+    if justificativa:
+        venda.observacao = (venda.observacao + "\nMotivo da operação: " + justificativa).strip()[:2000]
+        venda.save(update_fields=("estado", "observacao"))
+    else:
+        venda.save(update_fields=("estado",))
     itens = venda.itens.select_related("produto").select_for_update()
     for item in itens:
         item.produto.estoque_atual += item.quantidade
