@@ -1,12 +1,14 @@
 import json
 import os
+from datetime import datetime
 import socket
 import sys
 import uuid
 from decimal import Decimal
 from pathlib import Path
 
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QDesktopServices, QIcon
+from PySide6.QtCore import QUrl
 import requests
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout,
@@ -265,9 +267,17 @@ class PDVWindow(QMainWindow):
         }
         try:
             response = self.api.registrar_venda(payload)
-            QMessageBox.information(
-                self, "Venda concluída", f"Venda #{response['id']} registrada no servidor."
-            )
+            receipt = self._build_receipt(response["id"])
+            receipt_path = self.store.save_receipt(response["id"], receipt)
+            box = QMessageBox(self)
+            box.setWindowTitle("Venda concluída")
+            box.setText(f"Venda #{response['id']} registrada. Cupom interno salvo.")
+            box.setInformativeText(str(receipt_path))
+            open_button = box.addButton("Abrir cupom", QMessageBox.ButtonRole.AcceptRole)
+            box.addButton("Fechar", QMessageBox.ButtonRole.RejectRole)
+            box.exec()
+            if box.clickedButton() == open_button:
+                QDesktopServices.openUrl(QUrl.fromLocalFile(str(receipt_path)))
             self.cart.clear()
             self._render_cart()
             self._load_catalog()
@@ -280,6 +290,32 @@ class PDVWindow(QMainWindow):
             )
         except Exception as exc:
             QMessageBox.critical(self, "Venda recusada", str(exc))
+
+    def _build_receipt(self, sale_id):
+        lines = [
+            "ApPdv — CUPOM DE COMPRA NÃO FISCAL",
+            f"Empresa: {self.company.currentText()}",
+            f"Venda: #{sale_id}",
+            f"Data: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}",
+            "-" * 38,
+        ]
+        total = Decimal("0")
+        for product_id, item in self.cart.items():
+            product = item["produto"]
+            quantity = item["quantidade"]
+            price = Decimal(str(product["preco_venda"]))
+            line_total = (quantity * price).quantize(Decimal("0.01"))
+            total += line_total
+            lines.append(f"{product['codigo']} {product['nome']}")
+            lines.append(f"  {quantity} x R$ {price:.2f} = R$ {line_total:.2f}")
+        lines.extend([
+            "-" * 38,
+            f"TOTAL: R$ {total:.2f}",
+            f"Pagamento: {self.payment.currentText()}",
+            "",
+            "Documento não fiscal. Válido apenas como comprovante interno.",
+        ])
+        return "\n".join(lines) + "\n"
 
     def _cancel_sale(self):
         sale_id, ok = QInputDialog.getInt(self, "Cancelar venda", "Número da venda:")
