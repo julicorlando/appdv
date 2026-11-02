@@ -7,6 +7,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from PySide6.QtGui import QIcon
+import requests
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout,
     QInputDialog, QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton,
@@ -267,13 +268,15 @@ class PDVWindow(QMainWindow):
             self.cart.clear()
             self._render_cart()
             self._load_catalog()
-        except Exception as exc:
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
             self.store.queue_sale(self.tenant_id, payload, str(exc))
             QMessageBox.warning(
                 self, "Venda pendente",
-                "O servidor não confirmou a venda. Ela foi guardada neste computador para sincronização. "
+                "Sem conexão. A venda foi guardada neste computador para sincronização. "
                 "A sincronização exige caixa, estoque e valores válidos.\n\n" + str(exc),
             )
+        except Exception as exc:
+            QMessageBox.critical(self, "Venda recusada", str(exc))
 
     def _close_cash(self):
         if not self.cash_id:
