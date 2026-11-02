@@ -60,6 +60,8 @@ class ProdutoForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         self.empresa = empresa
         self.fields["categoria"].queryset = Categoria.objects.filter(empresa=empresa, ativa=True)
+        self.fields["setor"].required = True
+        self.fields["endereco"].required = True
 
     def clean_codigo(self):
         codigo = self.cleaned_data["codigo"]
