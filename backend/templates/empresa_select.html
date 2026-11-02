@@ -1,0 +1,1 @@
+{% extends "base.html" %}{% block content %}<section class="login-card"><p class="eyebrow">SELECIONE O TENANT</p><h1>Suas empresas</h1><div class="quick-links">{% for membro in membros %}<a href="{% url 'empresa-dashboard' membro.empresa_id %}"><b>{{ membro.empresa.nome }}</b><span>{{ membro.get_papel_display }}</span></a>{% endfor %}</div></section>{% endblock %}
