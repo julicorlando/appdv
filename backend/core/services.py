@@ -1,0 +1,127 @@
+import uuid
+from decimal import Decimal, InvalidOperation
+from django.db import transaction
+from django.utils import timezone
+from rest_framework.exceptions import ValidationError
+from .models import Caixa, ItemVenda, Produto, Transacao, Venda, TokenAutorizacao
+
+
+@transaction.atomic
+def registrar_venda(*, empresa, usuario, dados):
+    try:
+        chave = uuid.UUID(str(dados.get("idempotency_key")))
+    except (ValueError, TypeError, AttributeError):
+        raise ValidationError({"idempotency_key": "Informe um UUID válido."})
+    existente = Venda.objects.filter(empresa=empresa, idempotency_key=chave).first()
+    if existente:
+        return existente, False
+    caixa_id = dados.get("caixa")
+    try:
+        caixa = Caixa.objects.select_for_update().get(
+            pk=caixa_id, empresa=empresa, operador=usuario, estado=Caixa.Estado.ABERTO
+        )
+    except (Caixa.DoesNotExist, ValueError, TypeError):
+        raise ValidationError({"caixa": "Caixa aberto do operador não encontrado nesta empresa."})
+    linhas = dados.get("itens")
+    pagamentos = dados.get("pagamentos")
+    if not isinstance(linhas, list) or not linhas:
+        raise ValidationError({"itens": "A venda precisa conter ao menos um produto."})
+    if not isinstance(pagamentos, list) or not pagamentos:
+        raise ValidationError({"pagamentos": "Informe ao menos uma forma de pagamento."})
+
+    subtotal = Decimal("0.00")
+    itens_calculados = []
+    for linha in linhas:
+        try:
+            produto = Produto.objects.select_for_update().get(
+                pk=linha["produto"], empresa=empresa, ativo=True
+            )
+            quantidade = Decimal(str(linha["quantidade"]))
+            if not quantidade.is_finite() or quantidade <= 0:
+                raise ValueError
+        except Produto.DoesNotExist:
+            raise ValidationError({"itens": "Produto inexistente ou indisponível nesta empresa."})
+        except (KeyError, ValueError, TypeError, InvalidOperation):
+            raise ValidationError({"itens": "Produto ou quantidade inválida."})
+        if produto.estoque_atual < quantidade:
+            raise ValidationError({"itens": f"Estoque insuficiente para {produto.nome}."})
+        bruto = (produto.preco_venda * quantidade).quantize(Decimal("0.01"))
+        try:
+            desconto = Decimal(str(linha.get("desconto", "0")))
+            if not desconto.is_finite() or desconto < 0 or desconto > bruto:
+                raise ValueError
+        except (ValueError, TypeError, InvalidOperation):
+            raise ValidationError({"itens": "Desconto inválido."})
+        total_linha = bruto - desconto
+        subtotal += bruto
+        itens_calculados.append((produto, quantidade, desconto, total_linha))
+
+    desconto_total = sum((item[2] for item in itens_calculados), Decimal("0"))
+    total = subtotal - desconto_total
+    valores_pagamento = []
+    soma_pagamentos = Decimal("0")
+    for pagamento in pagamentos:
+        try:
+            meio = pagamento["meio"]
+            valor = Decimal(str(pagamento["valor"]))
+            if meio not in Transacao.Meio.values or not valor.is_finite() or valor <= 0:
+                raise ValueError
+        except (KeyError, ValueError, TypeError, InvalidOperation):
+            raise ValidationError({"pagamentos": "Forma ou valor de pagamento inválido."})
+        valores_pagamento.append((meio, valor, str(pagamento.get("referencia_externa", ""))))
+        soma_pagamentos += valor
+    if soma_pagamentos != total:
+        raise ValidationError({"pagamentos": "A soma dos pagamentos deve ser igual ao total da venda."})
+
+    venda = Venda.objects.create(
+        empresa=empresa, idempotency_key=chave, caixa=caixa, operador=usuario,
+        estado=Venda.Estado.CONCLUIDA, subtotal=subtotal, desconto=desconto_total,
+        total=total, observacao=str(dados.get("observacao", ""))[:2000],
+    )
+    for produto, quantidade, desconto, total_linha in itens_calculados:
+        ItemVenda.objects.create(
+            empresa=empresa, venda=venda, produto=produto, quantidade=quantidade,
+            preco_unitario=produto.preco_venda, desconto=desconto, total=total_linha,
+        )
+        produto.estoque_atual -= quantidade
+        produto.save(update_fields=("estoque_atual", "atualizado_em"))
+    for meio, valor, referencia in valores_pagamento:
+        Transacao.objects.create(
+            empresa=empresa, venda=venda, meio=meio, valor=valor,
+            referencia_externa=referencia[:120],
+        )
+    return venda, True
+
+
+@transaction.atomic
+def cancelar_venda(*, empresa, usuario, venda_id, codigo, acao=TokenAutorizacao.Acao.CANCELAR_VENDA):
+    try:
+        venda = Venda.objects.select_for_update().get(pk=venda_id, empresa=empresa)
+    except (Venda.DoesNotExist, ValueError, TypeError):
+        raise ValidationError({"venda": "Venda não encontrada nesta empresa."})
+    if venda.estado != Venda.Estado.CONCLUIDA:
+        raise ValidationError({"venda": "Somente vendas concluídas podem ser canceladas."})
+    digest = TokenAutorizacao.hash_token(str(codigo))
+    try:
+        token = TokenAutorizacao.objects.select_for_update().get(
+            empresa=empresa, venda=venda, acao=acao, token_hash=digest,
+        )
+    except TokenAutorizacao.DoesNotExist:
+        raise ValidationError({"token": "Token inválido para esta operação."})
+    if not token.esta_valido():
+        raise ValidationError({"token": "Token expirado, revogado ou já utilizado."})
+    token.usado_em = timezone.now()
+    token.usado_por = usuario
+    token.save(update_fields=("usado_em", "usado_por"))
+    venda.estado = Venda.Estado.CANCELADA
+    venda.save(update_fields=("estado",))
+    for item in venda.itens.select_related("produto").select_for_update():
+        item.produto.estoque_atual += item.quantidade
+        item.produto.save(update_fields=("estoque_atual", "atualizado_em"))
+    for pagamento in venda.transacoes.filter(tipo=Transacao.Tipo.PAGAMENTO):
+        Transacao.objects.create(
+            empresa=empresa, venda=venda, tipo=Transacao.Tipo.ESTORNO,
+            meio=pagamento.meio, valor=pagamento.valor,
+            referencia_externa=f"Estorno da venda {venda.pk}"[:120],
+        )
+    return venda
