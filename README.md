@@ -65,3 +65,9 @@ As operações protegidas exigem conexão com o servidor. Vendas que falham por 
 Todas as chamadas de negócio exigem JWT e `X-Empresa-ID`.
 
 Nunca comite segredos, tokens ou credenciais de produção. Antes de publicar, configure `SECRET_KEY`, `DEBUG=False`, `ALLOWED_HOSTS`, PostgreSQL, HTTPS e armazenamento de backups.
+
+
+## Pedidos web pelo WhatsApp
+No PDV Windows, monte o carrinho e escolha **Pedido via WhatsApp**. Informe o nome e o WhatsApp do cliente; o PDV cria um pedido com link público aleatório e abre o WhatsApp com a mensagem pronta. O operador confirma o envio no próprio WhatsApp. O cliente consulta o resumo e confirma no link, sem criar conta. A confirmação aparece em **Pedidos web** no painel da empresa para a equipe separar. Ao concluir o atendimento, o operador finaliza o pedido no caixa e o sistema registra a venda e baixa o estoque.
+
+Os links expiram após 7 dias. O pedido não reserva nem baixa estoque enquanto aguarda confirmação; disponibilidade e preços são conferidos novamente ao finalizar. O envio usa o link de compartilhamento do WhatsApp (sem API Business); envio automático requer configurar um provedor/WhatsApp Business.

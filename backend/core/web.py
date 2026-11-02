@@ -13,7 +13,7 @@ from django.utils import timezone
 from django.utils.text import slugify
 from .forms import CategoriaSimpleForm, EmpresaForm, MembroForm, ProdutoForm
 from .inventory import concluir_contagem, gerar_contagens_aleatorias, importar_planilha, iniciar_contagem
-from .models import Categoria, Empresa, InventarioContagem, ItemContagem, MembroEmpresa, MovimentacaoEstoque, Produto, TokenAutorizacao, Venda
+from .models import Categoria, Empresa, InventarioContagem, ItemContagem, MembroEmpresa, MovimentacaoEstoque, PedidoWeb, Produto, TokenAutorizacao, Venda
 
 User = get_user_model()
 
@@ -140,6 +140,7 @@ def empresa_dashboard(request, empresa_id):
     )
     return render(request, "empresa_dashboard.html", {
         "membro": membro, "empresa": membro.empresa,
+        "pedidos_confirmados": PedidoWeb.objects.filter(empresa=membro.empresa, estado=PedidoWeb.Estado.CONFIRMADO).count(),
         "produtos_count": Produto.objects.filter(empresa=membro.empresa, ativo=True).count(),
         "estoque_baixo": Produto.objects.filter(
             empresa=membro.empresa, ativo=True, estoque_atual__lte=F("estoque_minimo")
@@ -267,6 +268,49 @@ def empresa_entrada_estoque(request, empresa_id, produto_id):
 
 
 @login_required
+
+def pedido_publico(request, codigo):
+    pedido = get_object_or_404(
+        PedidoWeb.objects.select_related("empresa").prefetch_related("itens"),
+        codigo_publico=codigo,
+    )
+    if request.method == "POST":
+        if pedido.estado != PedidoWeb.Estado.AGUARDANDO_CLIENTE:
+            messages.info(request, "Este pedido não está mais aguardando confirmação.")
+        elif pedido.expira_em <= timezone.now():
+            messages.error(request, "O prazo deste pedido expirou. Fale com a loja para atualizar os valores.")
+        elif request.POST.get("acao") == "confirmar":
+            pedido.estado = PedidoWeb.Estado.CONFIRMADO
+            pedido.confirmado_em = timezone.now()
+            pedido.save(update_fields=("estado", "confirmado_em"))
+            messages.success(request, "Pedido confirmado. A loja recebeu seu aviso e vai separar os produtos.")
+        return redirect("pedido-publico", codigo=pedido.codigo_publico)
+    return render(request, "pedido_publico.html", {
+        "pedido": pedido, "itens": pedido.itens.all(),
+        "expirado": pedido.expira_em <= timezone.now(),
+    })
+
+
+@login_required
+def empresa_pedidos_web(request, empresa_id):
+    membro = require_membership(request, empresa_id)
+    if request.method == "POST":
+        pedido = get_object_or_404(PedidoWeb, pk=request.POST.get("pedido"), empresa=membro.empresa)
+        if request.POST.get("acao") == "separando" and pedido.estado == PedidoWeb.Estado.CONFIRMADO:
+            pedido.estado = PedidoWeb.Estado.SEPARANDO
+            pedido.save(update_fields=("estado",))
+            messages.success(request, f"Pedido #{pedido.pk} marcado para separação.")
+        else:
+            messages.error(request, "Ação inválida ou pedido ainda não confirmado.")
+        return redirect("empresa-pedidos-web", empresa_id=empresa_id)
+    pedidos = PedidoWeb.objects.filter(empresa=membro.empresa).prefetch_related(
+        "itens"
+    ).order_by("-criado_em")[:100]
+    return render(request, "empresa_pedidos_web.html", {
+        "empresa": membro.empresa, "membro": membro, "pedidos": pedidos,
+    })
+
+
 def empresa_vendas(request, empresa_id):
     membro = require_membership(request, empresa_id)
     vendas = Venda.objects.filter(empresa=membro.empresa).select_related(

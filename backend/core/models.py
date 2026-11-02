@@ -226,3 +226,46 @@ class ItemContagem(models.Model):
         constraints = [
             models.UniqueConstraint(fields=("contagem", "produto"), name="uniq_produto_contagem")
         ]
+
+
+class PedidoWeb(models.Model):
+    """Pedido criado no PDV e confirmado pelo cliente antes da venda no caixa."""
+    class Estado(models.TextChoices):
+        AGUARDANDO_CLIENTE = "AGUARDANDO_CLIENTE", "Aguardando cliente"
+        CONFIRMADO = "CONFIRMADO", "Confirmado pelo cliente"
+        SEPARANDO = "SEPARANDO", "Em separação"
+        CONCLUIDO = "CONCLUIDO", "Venda finalizada"
+        CANCELADO = "CANCELADO", "Cancelado"
+
+    empresa = models.ForeignKey(Empresa, on_delete=models.CASCADE, related_name="pedidos_web")
+    codigo_publico = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    cliente_nome = models.CharField(max_length=160)
+    cliente_telefone = models.CharField(max_length=20)
+    estado = models.CharField(max_length=20, choices=Estado.choices, default=Estado.AGUARDANDO_CLIENTE, db_index=True)
+    subtotal = models.DecimalField(max_digits=12, decimal_places=2)
+    desconto = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    total = models.DecimalField(max_digits=12, decimal_places=2)
+    criado_por = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="pedidos_web_criados")
+    criado_em = models.DateTimeField(auto_now_add=True)
+    expira_em = models.DateTimeField(db_index=True)
+    confirmado_em = models.DateTimeField(null=True, blank=True)
+    venda = models.ForeignKey("core.Venda", null=True, blank=True, on_delete=models.SET_NULL, related_name="pedido_web")
+    observacao = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ("-criado_em",)
+        indexes = [models.Index(fields=("empresa", "estado", "criado_em"), name="pedido_tenant_status_idx")]
+
+    def __str__(self):
+        return f"Pedido web #{self.pk} — {self.cliente_nome}"
+
+
+class ItemPedidoWeb(models.Model):
+    pedido = models.ForeignKey(PedidoWeb, on_delete=models.CASCADE, related_name="itens")
+    empresa = models.ForeignKey(Empresa, on_delete=models.CASCADE, related_name="itens_pedidos_web")
+    produto = models.ForeignKey(Produto, on_delete=models.PROTECT, related_name="itens_pedidos_web")
+    nome_produto = models.CharField(max_length=200)
+    codigo_produto = models.CharField(max_length=50)
+    quantidade = models.DecimalField(max_digits=14, decimal_places=3)
+    preco_unitario = models.DecimalField(max_digits=12, decimal_places=2)
+    total = models.DecimalField(max_digits=12, decimal_places=2)

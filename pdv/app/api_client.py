@@ -67,3 +67,27 @@ class ArmazemAPI:
         )
         response.raise_for_status()
         return response.json()
+
+
+    def criar_pedido_web(self, cliente_nome, cliente_telefone, itens):
+        response = self.session.post(
+            f"{self.base_url}/api/v1/pedidos-web/",
+            json={"cliente_nome": cliente_nome, "cliente_telefone": cliente_telefone, "itens": itens},
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def pedidos_web(self):
+        response = self.session.get(f"{self.base_url}/api/v1/pedidos-web/", timeout=self.timeout)
+        response.raise_for_status()
+        return response.json()
+
+    def finalizar_pedido_web(self, pedido_id, caixa_id, pagamentos):
+        response = self.session.post(
+            f"{self.base_url}/api/v1/pedidos-web/{pedido_id}/finalizar/",
+            json={"caixa": caixa_id, "pagamentos": pagamentos},
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        return response.json()

@@ -1,14 +1,16 @@
 from datetime import timedelta
 from django.utils import timezone
+from django.urls import reverse
 from rest_framework import mixins, viewsets, status
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from .models import Categoria, Empresa, MembroEmpresa, Produto, TokenAutorizacao, Venda
+from .models import Categoria, Empresa, ItemPedidoWeb, MembroEmpresa, PedidoWeb, Produto, TokenAutorizacao, Venda
 from .serializers import CategoriaSerializer, ProdutoSerializer, VendaSerializer
 from .services import cancelar_venda, registrar_venda
+from .pedido_web_services import finalizar_pedido_web
 
 
 class TenantAPIView(APIView):
@@ -109,7 +111,6 @@ class VendaViewSet(viewsets.GenericViewSet, mixins.ListModelMixin, mixins.Retrie
 
     @action(detail=True, methods=["post"], url_path="trocar")
     def trocar(self, request, pk=None):
-        from django.db import transaction
         empresa = self.get_empresa()
         with transaction.atomic():
             original = cancelar_venda(
@@ -204,3 +205,97 @@ class CriarTokenView(TenantAPIView):
             expira_em=timezone.now() + timedelta(minutes=10),
         )
         return Response({"token": codigo, "expira_em": token.expira_em}, status=status.HTTP_201_CREATED)
+
+
+class PedidosWebView(TenantAPIView):
+    """Pedidos públicos iniciados no PDV; a venda só é lançada ao finalizar no caixa."""
+    def get(self, request):
+        empresa, membro = self.get_empresa(request)
+        pedidos = PedidoWeb.objects.filter(empresa=empresa).exclude(
+            estado__in=(PedidoWeb.Estado.CONCLUIDO, PedidoWeb.Estado.CANCELADO)
+        ).prefetch_related("itens").order_by("-criado_em")[:100]
+        return Response([{
+            "id": pedido.pk, "codigo_publico": str(pedido.codigo_publico),
+            "cliente_nome": pedido.cliente_nome, "cliente_telefone": pedido.cliente_telefone,
+            "estado": pedido.estado, "subtotal": str(pedido.subtotal), "total": str(pedido.total),
+            "criado_em": pedido.criado_em, "expira_em": pedido.expira_em,
+            "public_url": request.build_absolute_uri(
+                reverse("pedido-publico", kwargs={"codigo": pedido.codigo_publico})
+            ),
+            "itens": [{
+                "produto": item.produto_id, "nome": item.nome_produto, "codigo": item.codigo_produto,
+                "quantidade": str(item.quantidade), "preco_unitario": str(item.preco_unitario),
+                "total": str(item.total),
+            } for item in pedido.itens.all()],
+        } for pedido in pedidos])
+
+    def post(self, request):
+        from datetime import timedelta
+        from decimal import Decimal, InvalidOperation
+        import re
+        from .models import Produto
+        empresa, membro = self.get_empresa(request)
+        nome = str(request.data.get("cliente_nome", "")).strip()[:160]
+        telefone = re.sub(r"\D", "", str(request.data.get("cliente_telefone", "")))
+        linhas = request.data.get("itens")
+        if not nome or not (10 <= len(telefone) <= 15):
+            raise ValidationError({"cliente": "Informe nome e telefone com DDD e código do país, se necessário."})
+        if not isinstance(linhas, list) or not linhas or len(linhas) > 200:
+            raise ValidationError({"itens": "Informe de 1 a 200 itens no pedido."})
+        produtos = {}
+        calculados = []
+        subtotal = Decimal("0.00")
+        for linha in linhas:
+            try:
+                produto = Produto.objects.select_for_update().get(
+                    pk=linha["produto"], empresa=empresa, ativo=True
+                )
+                quantidade = Decimal(str(linha["quantidade"]))
+                if not quantidade.is_finite() or quantidade <= 0:
+                    raise ValueError
+            except Produto.DoesNotExist:
+                raise ValidationError({"itens": "Produto indisponível nesta empresa."})
+            except (KeyError, ValueError, TypeError, InvalidOperation):
+                raise ValidationError({"itens": "Produto ou quantidade inválidos."})
+            produtos[produto.pk] = produtos.get(produto.pk, Decimal("0")) + quantidade
+            linha_total = (produto.preco_venda * quantidade).quantize(Decimal("0.01"))
+            calculados.append((produto, quantidade, linha_total))
+            subtotal += linha_total
+        for produto_id, quantidade in produtos.items():
+            produto = next(item[0] for item in calculados if item[0].pk == produto_id)
+            if produto.estoque_atual < quantidade:
+                raise ValidationError({"itens": f"Estoque insuficiente para {produto.nome}."})
+        pedido = PedidoWeb.objects.create(
+            empresa=empresa, cliente_nome=nome, cliente_telefone=telefone,
+            estado=PedidoWeb.Estado.AGUARDANDO_CLIENTE, subtotal=subtotal,
+            total=subtotal, desconto=Decimal("0"), criado_por=request.user,
+            expira_em=timezone.now() + timedelta(days=7),
+        )
+        for produto, quantidade, linha_total in calculados:
+            ItemPedidoWeb.objects.create(
+                pedido=pedido, empresa=empresa, produto=produto,
+                nome_produto=produto.nome, codigo_produto=produto.codigo,
+                quantidade=quantidade, preco_unitario=produto.preco_venda, total=linha_total,
+            )
+        public_url = request.build_absolute_uri(
+            reverse("pedido-publico", kwargs={"codigo": pedido.codigo_publico})
+        )
+        return Response({
+            "id": pedido.pk, "codigo_publico": str(pedido.codigo_publico),
+            "estado": pedido.estado, "total": str(pedido.total), "public_url": public_url,
+        }, status=status.HTTP_201_CREATED)
+
+
+class FinalizarPedidoWebView(TenantAPIView):
+    def post(self, request, pedido_id):
+        from django.db import transaction
+        empresa, membro = self.get_empresa(request)
+        resultado = finalizar_pedido_web(
+            empresa=empresa, usuario=request.user, pedido_id=pedido_id,
+            caixa_id=request.data.get("caixa"), pagamentos=request.data.get("pagamentos"),
+        )
+        pedido, venda = resultado
+        return Response({
+            "pedido_id": pedido.pk, "estado": pedido.estado,
+            "venda_id": venda.pk, "total": str(venda.total),
+        })

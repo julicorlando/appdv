@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Pedido #{{ pedido.id }} · {{ pedido.empresa.nome }}{% endblock %}
+{% block content %}
+<section class="panel" style="max-width:760px;margin:2rem auto">
+  <p class="eyebrow">{{ pedido.empresa.nome }}</p>
+  <h1>Pedido #{{ pedido.id }}</h1>
+  <p>Cliente: {{ pedido.cliente_nome }} · Status: <strong>{{ pedido.get_estado_display }}</strong></p>
+  <p>Confira os produtos e valores abaixo. Este link é exclusivo para seu pedido.</p>
+  <div class="table-wrap"><table><thead><tr><th>Produto</th><th>Qtd.</th><th>Unitário</th><th>Total</th></tr></thead><tbody>
+    {% for item in itens %}<tr><td>{{ item.nome_produto }}</td><td>{{ item.quantidade }}</td><td>R$ {{ item.preco_unitario|floatformat:2 }}</td><td>R$ {{ item.total|floatformat:2 }}</td></tr>{% endfor %}
+  </tbody></table></div>
+  <h2>Total: R$ {{ pedido.total|floatformat:2 }}</h2>
+  {% if pedido.estado == "AGUARDANDO_CLIENTE" and not expirado %}
+  <p>Ao confirmar, você avisa a loja para separar os produtos. O pagamento e a venda serão concluídos no atendimento.</p>
+  <form method="post">{% csrf_token %}<input type="hidden" name="acao" value="confirmar"><button type="submit">Confirmar pedido</button></form>
+  {% elif expirado %}<p>Este pedido expirou. Peça à loja um link atualizado.</p>
+  {% elif pedido.estado == "CONFIRMADO" or pedido.estado == "SEPARANDO" %}<p>Pedido confirmado. A loja está preparando os produtos.</p>
+  {% elif pedido.estado == "CONCLUIDO" %}<p>Pedido finalizado. Obrigado pela compra.</p>
+  {% else %}<p>Este pedido foi encerrado. Entre em contato com a loja para solicitar outro.</p>{% endif %}
+</section>
+{% endblock %}

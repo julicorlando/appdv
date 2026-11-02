@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from datetime import datetime
 import socket
 import sys
@@ -120,10 +121,13 @@ class PDVWindow(QMainWindow):
         self.payment.addItems(["DINHEIRO", "PIX", "CARTAO"])
         self.pay = QPushButton("Finalizar venda")
         self.pay.clicked.connect(self._checkout)
+        self.web_order = QPushButton("Pedido via WhatsApp")
+        self.web_order.clicked.connect(self._create_web_order)
         footer.addWidget(self.total, 1)
         footer.addWidget(QLabel("Pagamento"))
         footer.addWidget(self.payment)
         footer.addWidget(self.pay)
+        footer.addWidget(self.web_order)
         layout.addLayout(footer)
         self.setCentralWidget(root)
 
@@ -290,6 +294,49 @@ class PDVWindow(QMainWindow):
             )
         except Exception as exc:
             QMessageBox.critical(self, "Venda recusada", str(exc))
+
+    def _create_web_order(self):
+        if not self.cart:
+            QMessageBox.information(self, "Carrinho vazio", "Adicione produtos antes de criar o pedido.")
+            return
+        nome, ok = QInputDialog.getText(self, "Pedido via WhatsApp", "Nome do cliente:")
+        if not ok or not nome.strip():
+            return
+        telefone, ok = QInputDialog.getText(
+            self, "Pedido via WhatsApp", "WhatsApp com DDD (ex.: 81999998888):"
+        )
+        telefone = re.sub(r"\D", "", telefone)
+        if not ok or len(telefone) < 10:
+            QMessageBox.warning(self, "Telefone inválido", "Informe um número com DDD.")
+            return
+        itens = [
+            {"produto": product_id, "quantidade": str(item["quantidade"])}
+            for product_id, item in self.cart.items()
+        ]
+        try:
+            pedido = self.api.criar_pedido_web(nome.strip(), telefone, itens)
+            total = Decimal(str(pedido["total"]))
+            resumo = "\n".join(
+                f"• {item['quantidade']} x {item['produto']['nome']}"
+                for item in self.cart.values()
+            )
+            mensagem = (
+                f"Olá, {nome.strip()}! Seu pedido #{pedido['id']} da {self.company.currentText()}:"
+                f"\n{resumo}\nTotal: R$ {total:.2f}\n"
+                f"Confira e confirme pelo link: {pedido['public_url']}"
+            )
+            from urllib.parse import quote
+            link_whatsapp = f"https://wa.me/{telefone}?text={quote(mensagem)}"
+            QDesktopServices.openUrl(QUrl(link_whatsapp))
+            self.cart.clear()
+            self._render_cart()
+            QMessageBox.information(
+                self, "Pedido criado",
+                f"Pedido #{pedido['id']} criado. O WhatsApp foi aberto com a mensagem pronta. "
+                "Revise e toque em Enviar para encaminhar ao cliente."
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "Não foi possível criar o pedido", str(exc))
 
     def _build_receipt(self, sale_id):
         lines = [

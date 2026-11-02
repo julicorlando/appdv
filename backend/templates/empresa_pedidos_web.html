@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Pedidos web · {{ empresa.nome }}{% endblock %}
+{% block content %}
+<div class="page-head"><div><p class="eyebrow">VENDAS PELO WHATSAPP</p><h1>Pedidos web</h1><p>Pedidos confirmados pelo cliente para separar e finalizar no caixa.</p></div><nav class="nav-links"><a class="secondary" href="{% url 'empresa-dashboard' empresa.id %}">Painel</a></nav></div>
+<section class="panel"><div class="table-wrap"><table><thead><tr><th>Pedido</th><th>Cliente</th><th>Itens</th><th>Total</th><th>Status</th><th>Criado</th><th>Ação</th></tr></thead><tbody>
+{% for pedido in pedidos %}<tr><td>#{{ pedido.id }}</td><td>{{ pedido.cliente_nome }}<br>{{ pedido.cliente_telefone }}</td><td>{% for item in pedido.itens.all %}{{ item.quantidade }} × {{ item.nome_produto }}{% if not forloop.last %}<br>{% endif %}{% endfor %}</td><td>R$ {{ pedido.total|floatformat:2 }}</td><td>{{ pedido.get_estado_display }}</td><td>{{ pedido.criado_em|date:"d/m/Y H:i" }}</td><td>{% if pedido.estado == "CONFIRMADO" %}<form method="post">{% csrf_token %}<input type="hidden" name="pedido" value="{{ pedido.id }}"><input type="hidden" name="acao" value="separando"><button type="submit">Iniciar separação</button></form>{% elif pedido.estado == "SEPARANDO" %}Finalize a venda no PDV{% else %}—{% endif %}</td></tr>
+{% empty %}<tr><td colspan="7">Ainda não há pedidos web.</td></tr>{% endfor %}
+</tbody></table></div></section>
+{% endblock %}

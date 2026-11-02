@@ -5,7 +5,7 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from core.api import (
     AbrirCaixaView, CategoriaViewSet, CriarTokenView, FecharCaixaView,
-    MinhasEmpresasView, ProdutoViewSet, VendaViewSet,
+    MinhasEmpresasView, PedidosWebView, FinalizarPedidoWebView, ProdutoViewSet, VendaViewSet,
 )
 from core import web
 
@@ -30,6 +30,8 @@ urlpatterns = [
     path("empresa/<int:empresa_id>/inventario/", web.empresa_inventario, name="empresa-inventario"),
     path("empresa/<int:empresa_id>/movimentacoes/", web.empresa_movimentacoes, name="empresa-movimentacoes"),
     path("empresa/<int:empresa_id>/vendas/", web.empresa_vendas, name="empresa-vendas"),
+    path("empresa/<int:empresa_id>/pedidos-web/", web.empresa_pedidos_web, name="empresa-pedidos-web"),
+    path("pedido/<uuid:codigo>/", web.pedido_publico, name="pedido-publico"),
     path("empresa/<int:empresa_id>/categorias/criar/", web.empresa_categoria, name="empresa-categoria"),
     path("empresa/<int:empresa_id>/produtos/<int:produto_id>/entrada/", web.empresa_entrada_estoque, name="empresa-entrada-estoque"),
     path("empresa/<int:empresa_id>/autorizacoes/", web.empresa_autorizacao, name="empresa-autorizacao"),
@@ -40,5 +42,7 @@ urlpatterns = [
     path("api/v1/caixas/abrir/", AbrirCaixaView.as_view(), name="abrir-caixa"),
     path("api/v1/caixas/<int:caixa_id>/fechar/", FecharCaixaView.as_view(), name="fechar-caixa"),
     path("api/v1/autorizacoes/", CriarTokenView.as_view(), name="criar-token"),
+    path("api/v1/pedidos-web/", PedidosWebView.as_view(), name="pedidos-web"),
+    path("api/v1/pedidos-web/<int:pedido_id>/finalizar/", FinalizarPedidoWebView.as_view(), name="pedido-web-finalizar"),
     path("api/v1/", include(router.urls)),
 ]
