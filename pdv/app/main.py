@@ -1,4 +1,6 @@
 import json
+import base64
+import html
 import os
 import re
 from datetime import datetime
@@ -65,6 +67,7 @@ class PDVWindow(QMainWindow):
         self.cart = {}
         self.cash_id = None
         self.tenant_id = None
+        self.company_info = {}
         self.setWindowTitle("ApPdv — Frente de Caixa")
         self.setWindowIcon(QIcon(asset_path("appdv-icon-256.png")))
         self.resize(1120, 740)
@@ -154,6 +157,10 @@ class PDVWindow(QMainWindow):
             return
         self.tenant_id = str(self.company.currentData())
         self.api.selecionar_empresa(self.tenant_id)
+        try:
+            self.company_info = self.api.empresa_info()
+        except Exception:
+            self.company_info = {"nome": self.company.currentText(), "logo_data_url": ""}
         self.cart.clear()
         saldo, accepted = QInputDialog.getDouble(
             self, "Abertura do caixa", "Saldo inicial em dinheiro (R$):",
@@ -344,13 +351,19 @@ class PDVWindow(QMainWindow):
             QMessageBox.critical(self, "Não foi possível criar o pedido", str(exc))
 
     def _build_receipt(self, sale_id):
-        lines = [
-            "ApPdv — CUPOM DE COMPRA NÃO FISCAL",
-            f"Empresa: {self.company.currentText()}",
-            f"Venda: #{sale_id}",
-            f"Data: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}",
-            "-" * 38,
-        ]
+        def data_uri(path):
+            try:
+                raw = Path(path).read_bytes()
+                encoded = base64.b64encode(raw).decode("ascii")
+                return f"data:image/png;base64,{encoded}"
+            except OSError:
+                return ""
+
+        system_logo = data_uri(asset_path("appdv-icon-256.png"))
+        company_logo = self.company_info.get("logo_data_url", "")
+        company_name = html.escape(self.company_info.get("nome") or self.company.currentText())
+        cnpj = html.escape(self.company_info.get("cnpj") or "")
+        rows = []
         total = Decimal("0")
         for product_id, item in self.cart.items():
             product = item["produto"]
@@ -358,16 +371,45 @@ class PDVWindow(QMainWindow):
             price = Decimal(str(product["preco_venda"]))
             line_total = (quantity * price).quantize(Decimal("0.01"))
             total += line_total
-            lines.append(f"{product['codigo']} {product['nome']}")
-            lines.append(f"  {quantity} x R$ {price:.2f} = R$ {line_total:.2f}")
-        lines.extend([
-            "-" * 38,
-            f"TOTAL: R$ {total:.2f}",
-            f"Pagamento: {self.payment.currentText()}",
-            "",
-            "Documento não fiscal. Válido apenas como comprovante interno.",
-        ])
-        return "\n".join(lines) + "\n"
+            rows.append(
+                f"<tr><td><b>{html.escape(str(product['codigo']))}</b> "
+                f"{html.escape(str(product['nome']))}<br>"
+                f"<small>{quantity} x R$ {price:.2f}</small></td>"
+                f"<td class='right'>R$ {line_total:.2f}</td></tr>"
+            )
+        system_img = f"<img class='system-logo' src='{system_logo}' alt='ApPdv'>" if system_logo else ""
+        company_img = f"<img class='company-logo' src='{company_logo}' alt='Logo {company_name}'>" if company_logo else ""
+        tax_id = f"<div>{cnpj}</div>" if cnpj else ""
+        return f"""<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>Cupom interno #{sale_id}</title>
+<style>
+@page {{ size: 80mm auto; margin: 4mm; }}
+* {{ box-sizing: border-box; }}
+body {{ width: 72mm; margin: 0 auto; color: #111; font: 12px Arial, sans-serif; }}
+.brand {{ text-align: center; padding: 4px 0 8px; }}
+.system-logo {{ display:block; width:42px; height:42px; object-fit:contain; margin:0 auto 4px; }}
+.company-logo {{ display:block; max-width:62mm; max-height:22mm; object-fit:contain; margin:4px auto; }}
+h1 {{ font-size:15px; margin:5px 0; }}
+p {{ margin:3px 0; }}
+.rule {{ border:0; border-top:1px dashed #333; margin:8px 0; }}
+table {{ width:100%; border-collapse:collapse; }}
+td {{ padding:4px 0; vertical-align:top; }}
+.right {{ text-align:right; white-space:nowrap; }}
+.total {{ font-size:16px; font-weight:bold; }}
+.footer {{ text-align:center; font-size:10px; margin-top:10px; }}
+button {{ width:100%; padding:10px; margin:12px 0; }}
+@media print {{ button {{ display:none; }} body {{ width:auto; }} }}
+</style></head><body>
+<header class="brand">{system_img}{company_img}<h1>{company_name}</h1>{tax_id}
+<div>CUPOM DE COMPRA — NÃO FISCAL</div>
+<div>Venda #{sale_id}</div><div>{datetime.now().strftime('%d/%m/%Y %H:%M:%S')}</div></header>
+<hr class="rule"><table><tbody>{"".join(rows)}</tbody></table><hr class="rule">
+<p class="total">TOTAL: R$ {total:.2f}</p>
+<p>Pagamento: {html.escape(self.payment.currentText())}</p>
+<div class="footer">Documento não fiscal. Válido apenas como comprovante interno.</div>
+<button onclick="window.print()">Imprimir comprovante</button>
+</body></html>"""
 
     def _cancel_sale(self):
         sale_id, ok = QInputDialog.getInt(self, "Cancelar venda", "Número da venda:")

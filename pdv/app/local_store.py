@@ -71,6 +71,6 @@ class LocalStore:
     def save_receipt(self, sale_id, text):
         folder = Path(self.path).parent / "comprovantes"
         folder.mkdir(parents=True, exist_ok=True)
-        path = folder / f"cupom-{sale_id}.txt"
+        path = folder / f"cupom-{sale_id}.html"
         path.write_text(text, encoding="utf-8")
         return path

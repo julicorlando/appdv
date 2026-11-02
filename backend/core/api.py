@@ -1,4 +1,6 @@
 from datetime import timedelta
+import base64
+import mimetypes
 from django.utils import timezone
 from django.db import transaction
 from django.urls import reverse
@@ -30,6 +32,21 @@ class TenantAPIView(APIView):
         if perfil and not perfil.ativo:
             raise PermissionDenied("Conta desativada.")
         return membro.empresa, membro
+
+
+class EmpresaInfoView(TenantAPIView):
+    def get(self, request):
+        empresa, membro = self.get_empresa(request)
+        logo_data_url = ""
+        if empresa.logo:
+            with empresa.logo.open("rb") as arquivo:
+                conteudo = base64.b64encode(arquivo.read()).decode("ascii")
+            tipo = mimetypes.guess_type(empresa.logo.name)[0] or "image/png"
+            logo_data_url = f"data:{tipo};base64,{conteudo}"
+        return Response({
+            "id": empresa.pk, "nome": empresa.nome, "cnpj": empresa.cnpj,
+            "logo_data_url": logo_data_url,
+        })
 
 
 class MinhasEmpresasView(APIView):

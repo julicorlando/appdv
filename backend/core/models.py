@@ -12,6 +12,7 @@ class Empresa(models.Model):
     cnpj = models.CharField(max_length=14, blank=True, db_index=True)
     slug = models.SlugField(max_length=180, unique=True)
     ativa = models.BooleanField(default=True)
+    logo = models.ImageField(upload_to="empresas/logos/", blank=True)
     criada_em = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

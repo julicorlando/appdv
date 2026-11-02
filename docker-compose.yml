@@ -27,9 +27,12 @@ services:
       DEBUG: "True"
     ports:
       - "8000:8000"
+    volumes:
+      - app_media:/app/media
     depends_on:
       db:
         condition: service_healthy
 
 volumes:
   postgres_data:
+  app_media:

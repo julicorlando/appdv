@@ -76,3 +76,16 @@ class CategoriaSimpleForm(forms.ModelForm):
     class Meta:
         model = Categoria
         fields = ("nome",)
+
+
+class EmpresaLogoForm(forms.ModelForm):
+    class Meta:
+        model = Empresa
+        fields = ("logo",)
+        widgets = {"logo": forms.ClearableFileInput(attrs={"accept": "image/png,image/jpeg,image/webp"})}
+
+    def clean_logo(self):
+        imagem = self.cleaned_data.get("logo")
+        if imagem and hasattr(imagem, "size") and imagem.size > 2 * 1024 * 1024:
+            raise ValidationError("A logo deve ter no máximo 2 MB.")
+        return imagem

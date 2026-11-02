@@ -11,7 +11,7 @@ from django.http import HttpResponse, HttpResponseNotAllowed
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.utils.text import slugify
-from .forms import CategoriaSimpleForm, EmpresaForm, MembroForm, ProdutoForm
+from .forms import CategoriaSimpleForm, EmpresaForm, EmpresaLogoForm, MembroForm, ProdutoForm
 from .inventory import concluir_contagem, gerar_contagens_aleatorias, importar_planilha, iniciar_contagem
 from .models import Categoria, Empresa, InventarioContagem, ItemContagem, MembroEmpresa, MovimentacaoEstoque, PedidoWeb, Produto, TokenAutorizacao, Venda
 
@@ -151,6 +151,25 @@ def empresa_dashboard(request, empresa_id):
         "faturamento_mes": vendas_mes.aggregate(total=Sum("total"))["total"] or Decimal("0.00"),
         "membros": MembroEmpresa.objects.filter(empresa=membro.empresa, ativo=True).select_related("usuario"),
         "now": timezone.now(),
+    })
+
+
+@login_required
+def empresa_configuracao(request, empresa_id):
+    membro = require_membership(
+        request, empresa_id, (MembroEmpresa.Papel.ADMIN, MembroEmpresa.Papel.GERENTE)
+    )
+    form = EmpresaLogoForm(
+        request.POST or None, request.FILES or None, instance=membro.empresa
+    )
+    if request.method == "POST":
+        if form.is_valid():
+            form.save()
+            messages.success(request, "Logo da empresa atualizada.")
+            return redirect("empresa-configuracao", empresa_id=empresa_id)
+        messages.error(request, "Não foi possível salvar a imagem. Use PNG, JPG ou WebP de até 2 MB.")
+    return render(request, "empresa_configuracao.html", {
+        "membro": membro, "empresa": membro.empresa, "form": form,
     })
 
 

@@ -4,7 +4,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from core.api import (
-    AbrirCaixaView, CategoriaViewSet, CriarTokenView, FecharCaixaView,
+    AbrirCaixaView, CategoriaViewSet, CriarTokenView, EmpresaInfoView, FecharCaixaView,
     MinhasEmpresasView, PedidosWebView, FinalizarPedidoWebView, ProdutoViewSet, VendaViewSet,
 )
 from core import web
@@ -25,6 +25,7 @@ urlpatterns = [
     path("master/empresas/<int:empresa_id>/membros/adicionar/", web.master_adicionar_membro, name="master-adicionar-membro"),
     path("empresa/<int:empresa_id>/", web.empresa_dashboard, name="empresa-dashboard"),
     path("empresa/<int:empresa_id>/produtos/", web.empresa_produtos, name="empresa-produtos"),
+    path("empresa/<int:empresa_id>/configuracao/", web.empresa_configuracao, name="empresa-configuracao"),
     path("empresa/<int:empresa_id>/produtos/modelo-xlsx/", web.baixar_modelo_planilha, name="modelo-planilha"),
     path("empresa/<int:empresa_id>/produtos/importar-xlsx/", web.importar_produtos_excel, name="importar-planilha"),
     path("empresa/<int:empresa_id>/inventario/", web.empresa_inventario, name="empresa-inventario"),
@@ -39,6 +40,7 @@ urlpatterns = [
     path("api/v1/auth/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("api/v1/auth/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
     path("api/v1/minhas-empresas/", MinhasEmpresasView.as_view(), name="minhas-empresas"),
+    path("api/v1/empresa/", EmpresaInfoView.as_view(), name="empresa-info"),
     path("api/v1/caixas/abrir/", AbrirCaixaView.as_view(), name="abrir-caixa"),
     path("api/v1/caixas/<int:caixa_id>/fechar/", FecharCaixaView.as_view(), name="fechar-caixa"),
     path("api/v1/autorizacoes/", CriarTokenView.as_view(), name="criar-token"),

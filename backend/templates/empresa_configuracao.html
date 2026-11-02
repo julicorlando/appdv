@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Empresa e cupom · {{ empresa.nome }}{% endblock %}
+{% block content %}
+<div class="page-head"><div><p class="eyebrow">IDENTIDADE DA EMPRESA</p><h1>Logo no comprovante</h1><p>A logo será exibida junto à marca ApPdv nos cupons internos desta empresa.</p></div><nav class="nav-links"><a class="secondary" href="{% url 'empresa-dashboard' empresa.id %}">Painel</a></nav></div>
+<section class="panel" style="max-width:680px">
+{% if empresa.logo %}<p>Logo atual:</p><img src="{{ empresa.logo.url }}" alt="Logo de {{ empresa.nome }}" style="display:block;max-width:260px;max-height:120px;object-fit:contain;margin:1rem 0">{% endif %}
+<form method="post" enctype="multipart/form-data">{% csrf_token %}
+<label for="{{ form.logo.id_for_label }}">Selecionar logo (PNG, JPG ou WebP; até 2 MB)</label>
+{{ form.logo }}{% for error in form.logo.errors %}<p class="message error">{{ error }}</p>{% endfor %}
+<button type="submit">Salvar logo</button>
+</form>
+<p>A marca ApPdv é fixa. A logo enviada aqui aparece no cupom da empresa selecionada.</p>
+</section>
+{% endblock %}

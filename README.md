@@ -74,3 +74,7 @@ Nunca comite segredos, tokens ou credenciais de produção. Antes de publicar, c
 No PDV Windows, monte o carrinho e escolha **Pedido via WhatsApp**. Informe o nome e o WhatsApp do cliente; o PDV cria um pedido com link público aleatório e abre o WhatsApp com a mensagem pronta. O operador confirma o envio no próprio WhatsApp. O cliente consulta o resumo e confirma no link, sem criar conta. A confirmação aparece em **Pedidos web** no painel da empresa para a equipe separar. Ao concluir o atendimento, o operador finaliza o pedido no caixa e o sistema registra a venda e baixa o estoque.
 
 Os links expiram após 7 dias. O pedido não reserva nem baixa estoque enquanto aguarda confirmação; disponibilidade e preços são conferidos novamente ao finalizar. O envio usa o link de compartilhamento do WhatsApp (sem API Business); envio automático requer configurar um provedor/WhatsApp Business.
+
+
+## Logo no comprovante interno
+A empresa pode enviar uma logo em **Empresa e cupom** no painel web. O cupom do PDV é gerado em HTML para mostrar a marca ApPdv e a logo do tenant, com opção de impressão em papel térmico. Os arquivos locais ficam em \`comprovantes/cupom-<venda>.html\`. O armazenamento de mídia do Docker usa o volume persistente \`app_media\`.

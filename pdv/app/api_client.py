@@ -32,6 +32,11 @@ class ArmazemAPI:
         self.empresa_id = str(empresa_id)
         self.session.headers["X-Empresa-ID"] = self.empresa_id
 
+    def empresa_info(self):
+        response = self.session.get(f"{self.base_url}/api/v1/empresa/", timeout=self.timeout)
+        response.raise_for_status()
+        return response.json()
+
     def produtos(self):
         response = self.session.get(f"{self.base_url}/api/v1/produtos/", timeout=self.timeout)
         response.raise_for_status()
