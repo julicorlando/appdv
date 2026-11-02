@@ -4,7 +4,7 @@ import socket
 import sys
 import uuid
 from decimal import Decimal
-from PySide6.QtWidgets import (
+from pathlib import Path\nfrom PySide6.QtGui import QIcon\nfrom PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout,
     QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget, QInputDialog,
@@ -13,10 +13,10 @@ from app.api_client import ArmazemAPI
 from app.local_store import LocalStore
 
 
-class LoginDialog(QDialog):
+def asset_path(name):\n    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))\n    return str(base / "assets" / name)\n\n\nclass LoginDialog(QDialog):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Conectar ao Armazém PDV")
+        self.setWindowTitle("Conectar ao ApPdv")\n        self.setWindowIcon(QIcon(asset_path("appdv-icon-256.png")))
         self.api = None
         layout = QFormLayout(self)
         self.url = QLineEdit(os.getenv("APPDV_API_URL", "http://127.0.0.1:8000"))
@@ -49,7 +49,7 @@ class PDVWindow(QMainWindow):
         self.cart = {}
         self.cash_id = None
         self.tenant_id = None
-        self.setWindowTitle("Armazém PDV")
+        self.setWindowTitle("ApPdv — Frente de Caixa")\n        self.setWindowIcon(QIcon(asset_path("appdv-icon-256.png")))
         self.resize(1120, 740)
         self._build()
         self._select_company()
