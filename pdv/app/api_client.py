@@ -13,18 +13,44 @@ class ArmazemAPI:
         if self.empresa_id:
             self.session.headers["X-Empresa-ID"] = self.empresa_id
 
-    def selecionar_empresa(self, empresa_id):
-        """Define o tenant ativo após o operador escolher uma empresa autorizada."""
-        self.empresa_id = str(empresa_id)
-        self.session.headers["X-Empresa-ID"] = self.empresa_id
+    def login(self, username, password):
+        response = self.session.post(
+            f"{self.base_url}/api/v1/auth/token/",
+            json={"username": username, "password": password}, timeout=self.timeout,
+        )
+        response.raise_for_status()
+        tokens = response.json()
+        self.session.headers["Authorization"] = f"Bearer {tokens['access']}"
+        return tokens
 
     def minhas_empresas(self):
         response = self.session.get(f"{self.base_url}/api/v1/minhas-empresas/", timeout=self.timeout)
         response.raise_for_status()
         return response.json()
 
+    def selecionar_empresa(self, empresa_id):
+        self.empresa_id = str(empresa_id)
+        self.session.headers["X-Empresa-ID"] = self.empresa_id
+
     def produtos(self):
         response = self.session.get(f"{self.base_url}/api/v1/produtos/", timeout=self.timeout)
+        response.raise_for_status()
+        return response.json()
+
+    def abrir_caixa(self, dispositivo_id, saldo_abertura=0):
+        response = self.session.post(
+            f"{self.base_url}/api/v1/caixas/abrir/",
+            json={"dispositivo_id": dispositivo_id, "saldo_abertura": str(saldo_abertura)},
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def fechar_caixa(self, caixa_id, saldo_fechamento):
+        response = self.session.post(
+            f"{self.base_url}/api/v1/caixas/{caixa_id}/fechar/",
+            json={"saldo_fechamento": str(saldo_fechamento)}, timeout=self.timeout,
+        )
         response.raise_for_status()
         return response.json()
 
@@ -33,8 +59,7 @@ class ArmazemAPI:
         response.raise_for_status()
         return response.json()
 
-    def cancelar_venda(self, venda_id, token, justificativa):
-        # Requer conectividade; o servidor valida e consome o token atomicamente.
+    def cancelar_venda(self, venda_id, token, justificativa=""):
         response = self.session.post(
             f"{self.base_url}/api/v1/vendas/{venda_id}/cancelar/",
             json={"token": token, "justificativa": justificativa},
