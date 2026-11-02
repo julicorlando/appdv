@@ -1,4 +1,6 @@
 from datetime import date
+import base64
+import mimetypes
 from io import BytesIO
 from decimal import Decimal, InvalidOperation
 from django.contrib import messages
@@ -168,8 +170,15 @@ def empresa_configuracao(request, empresa_id):
             messages.success(request, "Logo da empresa atualizada.")
             return redirect("empresa-configuracao", empresa_id=empresa_id)
         messages.error(request, "Não foi possível salvar a imagem. Use PNG, JPG ou WebP de até 2 MB.")
+    logo_preview = ""
+    if membro.empresa.logo:
+        with membro.empresa.logo.open("rb") as arquivo:
+            encoded = base64.b64encode(arquivo.read()).decode("ascii")
+        media_type = mimetypes.guess_type(membro.empresa.logo.name)[0] or "image/png"
+        logo_preview = f"data:{media_type};base64,{encoded}"
     return render(request, "empresa_configuracao.html", {
         "membro": membro, "empresa": membro.empresa, "form": form,
+        "logo_preview": logo_preview,
     })
 
 

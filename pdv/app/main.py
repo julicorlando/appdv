@@ -388,7 +388,7 @@ class PDVWindow(QMainWindow):
 * {{ box-sizing: border-box; }}
 body {{ width: 72mm; margin: 0 auto; color: #111; font: 12px Arial, sans-serif; }}
 .brand {{ text-align: center; padding: 4px 0 8px; }}
-.system-logo {{ display:block; width:42px; height:42px; object-fit:contain; margin:0 auto 4px; }}
+.system-logo {{ display:block; width:145px; height:42px; object-fit:contain; margin:0 auto 4px; }}
 .company-logo {{ display:block; max-width:62mm; max-height:22mm; object-fit:contain; margin:4px auto; }}
 h1 {{ font-size:15px; margin:5px 0; }}
 p {{ margin:3px 0; }}
