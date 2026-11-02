@@ -287,12 +287,28 @@ def baixar_modelo_planilha(request, empresa_id):
         "codigo", "nome", "categoria", "unidade", "preco_venda",
         "estoque_atual", "estoque_minimo", "setor", "endereco", "codigo_barras",
     ])
-    sheet.append([
-        "MAT-001", "Cimento CP-II 50kg", "Cimento", "SC", 34.90, 120,
-        20, "Depósito A", "A-03-02", "7890000000000",
-    ])
+    instructions = workbook.create_sheet("Instruções")
+    instructions.append(["Campo", "Obrigatório", "Descrição", "Exemplo"])
+    instructions.append(["codigo", "Sim", "Código único do produto nesta empresa; texto para manter zeros à esquerda.", "MAT-001"])
+    instructions.append(["nome", "Sim", "Nome que aparecerá no catálogo e no PDV.", "Cimento CP-II 50kg"])
+    instructions.append(["categoria", "Não", "Se vazio, será usado/criado Geral.", "Cimento"])
+    instructions.append(["unidade", "Não", "Unidade de venda; padrão UN.", "SC, KG, M, M2"])
+    instructions.append(["preco_venda", "Sim", "Preço unitário em reais, sem símbolo.", "34,90"])
+    instructions.append(["estoque_atual", "Sim", "Novo saldo absoluto; substitui o saldo atual do cadastro.", "120"])
+    instructions.append(["estoque_minimo", "Não", "Gatilho de alerta de reposição.", "20"])
+    instructions.append(["setor", "Sim", "Área do armazém. Usada no sorteio preventivo.", "Depósito A"])
+    instructions.append(["endereco", "Sim", "Posição física dentro do setor.", "A-03-02"])
+    instructions.append(["codigo_barras", "Não", "Código de barras como texto.", "7890000000000"])
+    instructions.column_dimensions["A"].width = 22
+    instructions.column_dimensions["B"].width = 16
+    instructions.column_dimensions["C"].width = 78
+    instructions.column_dimensions["D"].width = 30
+    for cell in instructions[1]:
+        cell.font = Font(bold=True)
     sheet.freeze_panes = "A2"
     sheet.auto_filter.ref = sheet.dimensions
+    sheet["A2"].number_format = "@"
+    sheet["J2"].number_format = "@"
     for cell in sheet[1]:
         cell.font = Font(bold=True)
     for column, width in {
