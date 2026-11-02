@@ -2,7 +2,7 @@
 setlocal
 cd /d "%~dp0"
 python -m pip install -r requirements.txt
-python -m PyInstaller --noconfirm --clean --onefile --windowed --name ArmazemPDV app\main.py
+python -m PyInstaller --noconfirm --clean --onefile --windowed --name ApPdv --icon=assets\appdv-icon.ico --add-data "assets;assets" run_pdv.py
 echo.
-echo Executavel criado em dist\ArmazemPDV.exe
+echo Executavel criado em dist\ApPdv.exe
 pause
