@@ -24,6 +24,8 @@ urlpatterns = [
     path("master/empresas/<int:empresa_id>/membros/adicionar/", web.master_adicionar_membro, name="master-adicionar-membro"),
     path("empresa/<int:empresa_id>/", web.empresa_dashboard, name="empresa-dashboard"),
     path("empresa/<int:empresa_id>/produtos/", web.empresa_produtos, name="empresa-produtos"),
+    path("empresa/<int:empresa_id>/categorias/criar/", web.empresa_categoria, name="empresa-categoria"),
+    path("empresa/<int:empresa_id>/produtos/<int:produto_id>/entrada/", web.empresa_entrada_estoque, name="empresa-entrada-estoque"),
     path("empresa/<int:empresa_id>/autorizacoes/", web.empresa_autorizacao, name="empresa-autorizacao"),
     path("admin/", admin.site.urls),
     path("api/v1/auth/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
