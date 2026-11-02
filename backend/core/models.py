@@ -165,3 +165,21 @@ class TokenAutorizacao(models.Model):
 
     def esta_valido(self):
         return self.usado_em is None and self.revogado_em is None and self.expira_em > timezone.now()
+
+
+class MovimentacaoEstoque(models.Model):
+    class Tipo(models.TextChoices):
+        ENTRADA = "ENTRADA", "Entrada"
+        VENDA = "VENDA", "Venda"
+        DEVOLUCAO = "DEVOLUCAO", "Devolução"
+        AJUSTE = "AJUSTE", "Ajuste"
+    empresa = models.ForeignKey(Empresa, on_delete=models.CASCADE, related_name="movimentacoes_estoque")
+    produto = models.ForeignKey(Produto, on_delete=models.PROTECT, related_name="movimentacoes")
+    tipo = models.CharField(max_length=12, choices=Tipo.choices)
+    quantidade = models.DecimalField(max_digits=14, decimal_places=3)
+    referencia = models.CharField(max_length=120, blank=True)
+    operador = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL)
+    criado_em = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-criado_em",)
