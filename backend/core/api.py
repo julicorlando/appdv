@@ -133,11 +133,11 @@ class AbrirCaixaView(TenantAPIView):
         try:
             saldo = request.data.get("saldo_abertura", "0")
             dispositivo = str(request.data["dispositivo_id"])[:100]
-            from decimal import Decimal
+            from decimal import Decimal, InvalidOperation
             saldo = Decimal(str(saldo))
             if not saldo.is_finite() or saldo < 0 or not dispositivo:
                 raise ValueError
-        except (KeyError, ValueError, TypeError):
+        except (KeyError, ValueError, TypeError, InvalidOperation):
             raise ValidationError({"caixa": "Informe dispositivo e saldo de abertura válidos."})
         existente = Caixa.objects.filter(
             empresa=empresa, operador=request.user, estado=Caixa.Estado.ABERTO
