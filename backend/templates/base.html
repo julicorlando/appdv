@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{% block title %}Armazém PDV{% endblock %}</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="topbar"><a class="brand" href="/">ARMAZÉM<span>PDV</span></a>
+{% if user.is_authenticated %}<div class="top-actions"><span>{{ user.get_username }}</span><form method="post" action="{% url 'logout' %}">{% csrf_token %}<button class="ghost" type="submit">Sair</button></form></div>{% endif %}
+</header>
+<main class="wrap">
+{% if messages %}<section class="messages">{% for message in messages %}<div class="message {{ message.tags }}">{{ message }}</div>{% endfor %}</section>{% endif %}
+{% block content %}{% endblock %}
+</main>
+</body></html>
