@@ -267,8 +267,6 @@ def empresa_entrada_estoque(request, empresa_id, produto_id):
     return redirect("empresa-produtos", empresa_id=empresa_id)
 
 
-@login_required
-
 def pedido_publico(request, codigo):
     pedido = get_object_or_404(
         PedidoWeb.objects.select_related("empresa").prefetch_related("itens"),
@@ -292,6 +290,7 @@ def pedido_publico(request, codigo):
 
 
 @login_required
+@login_required
 def empresa_pedidos_web(request, empresa_id):
     membro = require_membership(request, empresa_id)
     if request.method == "POST":
@@ -311,6 +310,7 @@ def empresa_pedidos_web(request, empresa_id):
     })
 
 
+@login_required
 def empresa_vendas(request, empresa_id):
     membro = require_membership(request, empresa_id)
     vendas = Venda.objects.filter(empresa=membro.empresa).select_related(

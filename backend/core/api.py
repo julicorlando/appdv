@@ -1,5 +1,6 @@
 from datetime import timedelta
 from django.utils import timezone
+from django.db import transaction
 from django.urls import reverse
 from rest_framework import mixins, viewsets, status
 from rest_framework.decorators import action
@@ -229,6 +230,7 @@ class PedidosWebView(TenantAPIView):
             } for item in pedido.itens.all()],
         } for pedido in pedidos])
 
+    @transaction.atomic
     def post(self, request):
         from datetime import timedelta
         from decimal import Decimal, InvalidOperation
