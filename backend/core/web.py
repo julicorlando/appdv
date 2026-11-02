@@ -290,7 +290,6 @@ def pedido_publico(request, codigo):
 
 
 @login_required
-@login_required
 def empresa_pedidos_web(request, empresa_id):
     membro = require_membership(request, empresa_id)
     if request.method == "POST":

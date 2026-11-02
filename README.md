@@ -60,6 +60,9 @@ As operações protegidas exigem conexão com o servidor. Vendas que falham por 
 - `POST /api/v1/caixas/abrir/`, `POST /api/v1/caixas/{id}/fechar/`
 - `POST /api/v1/vendas/`
 - `POST /api/v1/autorizacoes/`
+- `POST /api/v1/pedidos-web/` e `GET /api/v1/pedidos-web/`
+- `POST /api/v1/pedidos-web/{id}/finalizar/`
+- Página pública de confirmação: `/pedido/{uuid}/`
 - `POST /api/v1/vendas/{id}/cancelar/`, `/estornar/` e `/trocar/`
 
 Todas as chamadas de negócio exigem JWT e `X-Empresa-ID`.
