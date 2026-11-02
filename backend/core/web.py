@@ -21,11 +21,13 @@ def home(request):
         return redirect("login")
     if request.user.is_superuser:
         return redirect("master")
-    membership = MembroEmpresa.objects.filter(
+    memberships = MembroEmpresa.objects.filter(
         usuario=request.user, ativo=True, empresa__ativa=True
-    ).select_related("empresa").first()
-    if membership:
-        return redirect("empresa-dashboard", empresa_id=membership.empresa_id)
+    ).select_related("empresa")
+    if memberships.count() == 1:
+        return redirect("empresa-dashboard", empresa_id=memberships.first().empresa_id)
+    if memberships.count() > 1:
+        return render(request, "empresa_select.html", {"membros": memberships})
     return render(request, "sem_empresa.html")
 
 
@@ -240,6 +242,11 @@ def empresa_entrada_estoque(request, empresa_id, produto_id):
         )
         produto.estoque_atual += quantidade
         produto.save(update_fields=("estoque_atual", "atualizado_em"))
+        MovimentacaoEstoque.objects.create(
+            empresa=membro.empresa, produto=produto,
+            tipo=MovimentacaoEstoque.Tipo.ENTRADA, quantidade=quantidade,
+            referencia="Entrada pelo painel web", operador=request.user,
+        )
     messages.success(request, f"Entrada de {quantidade} {produto.unidade} registrada para {produto.nome}.")
     return redirect("empresa-produtos", empresa_id=empresa_id)
 
