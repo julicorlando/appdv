@@ -409,3 +409,31 @@ def empresa_inventario(request, empresa_id):
         "setores": list(Produto.objects.filter(empresa=membro.empresa, ativo=True)
                         .exclude(setor="").values_list("setor", flat=True).distinct()),
     })
+
+
+@login_required
+def master_criar_usuario(request):
+    if not request.user.is_superuser:
+        raise PermissionDenied("Acesso exclusivo ao painel Master.")
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    username = request.POST.get("username", "").strip()
+    email = request.POST.get("email", "").strip()
+    password = request.POST.get("password", "")
+    empresa_id = request.POST.get("empresa")
+    papel = request.POST.get("papel")
+    if not username or not email or len(password) < 10:
+        messages.error(request, "Informe usuário, e-mail e senha com pelo menos 10 caracteres.")
+        return redirect("master")
+    if papel not in MembroEmpresa.Papel.values:
+        messages.error(request, "Selecione um papel válido.")
+        return redirect("master")
+    empresa = get_object_or_404(Empresa, pk=empresa_id)
+    if User.objects.filter(username=username).exists():
+        messages.error(request, "Esse nome de usuário já está cadastrado. Use a opção de vincular usuário existente.")
+        return redirect("master")
+    with transaction.atomic():
+        user = User.objects.create_user(username=username, email=email, password=password)
+        MembroEmpresa.objects.create(empresa=empresa, usuario=user, papel=papel)
+    messages.success(request, f"Usuário {username} criado e vinculado a {empresa.nome}.")
+    return redirect("master")
