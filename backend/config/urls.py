@@ -20,6 +20,7 @@ urlpatterns = [
     path("accounts/logout/", auth_views.LogoutView.as_view(), name="logout"),
     path("master/", web.master_dashboard, name="master"),
     path("master/empresas/criar/", web.master_criar_empresa, name="master-criar-empresa"),
+    path("master/usuarios/criar/", web.master_criar_usuario, name="master-criar-usuario"),
     path("master/empresas/<int:empresa_id>/status/", web.master_status_empresa, name="master-status-empresa"),
     path("master/empresas/<int:empresa_id>/membros/adicionar/", web.master_adicionar_membro, name="master-adicionar-membro"),
     path("empresa/<int:empresa_id>/", web.empresa_dashboard, name="empresa-dashboard"),
