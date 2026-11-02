@@ -4,13 +4,14 @@ from .models import Categoria, Produto, Venda, ItemVenda
 class CategoriaSerializer(serializers.ModelSerializer):
     class Meta:
         model = Categoria
-        fields = "__all__"
+        fields = ("id", "nome", "ativa")
 
 class ProdutoSerializer(serializers.ModelSerializer):
     categoria_nome = serializers.CharField(source="categoria.nome", read_only=True)
     class Meta:
         model = Produto
-        fields = "__all__"
+        fields = ("id", "categoria", "categoria_nome", "codigo", "codigo_barras", "nome", "unidade",
+                  "preco_venda", "estoque_atual", "estoque_minimo", "ativo", "atualizado_em")
         read_only_fields = ("estoque_atual", "atualizado_em")
 
 class ItemVendaSerializer(serializers.ModelSerializer):
@@ -22,5 +23,6 @@ class VendaSerializer(serializers.ModelSerializer):
     itens = ItemVendaSerializer(many=True, read_only=True)
     class Meta:
         model = Venda
-        fields = "__all__"
-        read_only_fields = ("operador", "estado", "subtotal", "total", "sincronizada_em")
+        fields = ("id", "idempotency_key", "caixa", "operador", "estado", "subtotal",
+                  "desconto", "total", "realizada_em", "sincronizada_em", "itens")
+        read_only_fields = fields
