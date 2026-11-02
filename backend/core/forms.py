@@ -69,3 +69,8 @@ class ProdutoForm(forms.ModelForm):
         if qs.exists():
             raise ValidationError("Já existe produto com este código nesta empresa.")
         return codigo
+
+class CategoriaSimpleForm(forms.ModelForm):
+    class Meta:
+        model = Categoria
+        fields = ("nome",)
