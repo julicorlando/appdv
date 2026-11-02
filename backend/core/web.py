@@ -134,6 +134,10 @@ def empresa_dashboard(request, empresa_id):
     vendas = Venda.objects.filter(
         empresa=membro.empresa, estado=Venda.Estado.CONCLUIDA, realizada_em__date=today
     )
+    vendas_mes = Venda.objects.filter(
+        empresa=membro.empresa, estado=Venda.Estado.CONCLUIDA,
+        realizada_em__year=today.year, realizada_em__month=today.month,
+    )
     return render(request, "empresa_dashboard.html", {
         "membro": membro, "empresa": membro.empresa,
         "produtos_count": Produto.objects.filter(empresa=membro.empresa, ativo=True).count(),
@@ -142,6 +146,8 @@ def empresa_dashboard(request, empresa_id):
         ).count(),
         "vendas_count": vendas.count(),
         "faturamento_hoje": vendas.aggregate(total=Sum("total"))["total"] or Decimal("0.00"),
+        "vendas_mes_count": vendas_mes.count(),
+        "faturamento_mes": vendas_mes.aggregate(total=Sum("total"))["total"] or Decimal("0.00"),
         "membros": MembroEmpresa.objects.filter(empresa=membro.empresa, ativo=True).select_related("usuario"),
         "now": timezone.now(),
     })
@@ -438,3 +444,16 @@ def master_criar_usuario(request):
         MembroEmpresa.objects.create(empresa=empresa, usuario=user, papel=papel)
     messages.success(request, f"Usuário {username} criado e vinculado a {empresa.nome}.")
     return redirect("master")
+
+
+@login_required
+def empresa_movimentacoes(request, empresa_id):
+    membro = require_membership(
+        request, empresa_id, (MembroEmpresa.Papel.ADMIN, MembroEmpresa.Papel.GERENTE)
+    )
+    movimentos = MovimentacaoEstoque.objects.filter(
+        empresa=membro.empresa
+    ).select_related("produto", "operador").order_by("-criado_em")[:200]
+    return render(request, "empresa_movimentacoes.html", {
+        "empresa": membro.empresa, "membro": membro, "movimentos": movimentos,
+    })
