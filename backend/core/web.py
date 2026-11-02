@@ -242,6 +242,13 @@ def empresa_entrada_estoque(request, empresa_id, produto_id):
         produto = get_object_or_404(
             Produto.objects.select_for_update(), pk=produto_id, empresa=membro.empresa
         )
+        if ItemContagem.objects.filter(
+            contagem__empresa=membro.empresa,
+            contagem__estado=InventarioContagem.Estado.ABERTO,
+            produto=produto,
+        ).exists():
+            messages.error(request, "Este produto está em contagem física. Aguarde a conclusão.")
+            return redirect("empresa-produtos", empresa_id=empresa_id)
         produto.estoque_atual += quantidade
         produto.save(update_fields=("estoque_atual", "atualizado_em"))
         MovimentacaoEstoque.objects.create(
