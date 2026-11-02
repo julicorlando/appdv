@@ -7,7 +7,7 @@ from decimal import Decimal
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout,
     QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton, QTableWidget,
-    QTableWidgetItem, QVBoxLayout, QWidget,
+    QTableWidgetItem, QVBoxLayout, QWidget, QInputDialog,
 )
 from app.api_client import ArmazemAPI
 from app.local_store import LocalStore
@@ -62,6 +62,9 @@ class PDVWindow(QMainWindow):
         self.status = QLabel("Conectando")
         self.refresh = QPushButton("Atualizar catálogo")
         self.refresh.clicked.connect(self._load_catalog)
+        self.close_cash = QPushButton("Fechar caixa")
+        self.close_cash.clicked.connect(self._close_cash)
+        header.addWidget(self.close_cash)
         header.addWidget(QLabel("Empresa"))
         header.addWidget(self.company, 1)
         header.addWidget(self.status)
@@ -124,7 +127,10 @@ class PDVWindow(QMainWindow):
         self.api.selecionar_empresa(self.tenant_id)
         self.cart.clear()
         try:
-            caixa = self.api.abrir_caixa(socket.gethostname())
+            saldo, accepted = QInputDialog.getDouble(self, "Abertura do caixa", "Saldo inicial em dinheiro (R$):", 0.00, 0.00, 10000000.00, 2)
+            if not accepted:
+                return
+            caixa = self.api.abrir_caixa(socket.gethostname(), saldo)
             self.cash_id = caixa["id"]
             self.status.setText("Caixa aberto · online")
         except Exception as exc:
@@ -220,6 +226,20 @@ class PDVWindow(QMainWindow):
             QMessageBox.warning(self, "Venda pendente",
                 "O servidor não confirmou a venda. Ela foi guardada neste computador para sincronização. "
                 "A sincronização só será aceita se caixa, estoque e valores continuarem válidos.\n\n" + str(exc))
+
+    def _close_cash(self):
+        if not self.cash_id:
+            return
+        saldo, accepted = QInputDialog.getDouble(self, "Fechamento do caixa", "Valor contado em dinheiro (R$):", 0.00, 0.00, 10000000.00, 2)
+        if not accepted:
+            return
+        try:
+            self.api.fechar_caixa(self.cash_id, saldo)
+            QMessageBox.information(self, "Caixa fechado", "O caixa foi encerrado no servidor.")
+            self.cash_id = None
+            self.status.setText("Caixa fechado")
+        except Exception as exc:
+            QMessageBox.critical(self, "Falha ao fechar caixa", str(exc))
 
     def _sync_pending(self):
         if not self.tenant_id or not self.cash_id:
