@@ -28,6 +28,7 @@ urlpatterns = [
     path("empresa/<int:empresa_id>/produtos/modelo-xlsx/", web.baixar_modelo_planilha, name="modelo-planilha"),
     path("empresa/<int:empresa_id>/produtos/importar-xlsx/", web.importar_produtos_excel, name="importar-planilha"),
     path("empresa/<int:empresa_id>/inventario/", web.empresa_inventario, name="empresa-inventario"),
+    path("empresa/<int:empresa_id>/movimentacoes/", web.empresa_movimentacoes, name="empresa-movimentacoes"),
     path("empresa/<int:empresa_id>/vendas/", web.empresa_vendas, name="empresa-vendas"),
     path("empresa/<int:empresa_id>/categorias/criar/", web.empresa_categoria, name="empresa-categoria"),
     path("empresa/<int:empresa_id>/produtos/<int:produto_id>/entrada/", web.empresa_entrada_estoque, name="empresa-entrada-estoque"),
