@@ -57,6 +57,8 @@ class Produto(models.Model):
     categoria = models.ForeignKey(Categoria, on_delete=models.PROTECT, related_name="produtos")
     codigo = models.CharField(max_length=50)
     codigo_barras = models.CharField(max_length=50, blank=True, db_index=True)
+    setor = models.CharField(max_length=80, blank=True, db_index=True)
+    endereco = models.CharField(max_length=100, blank=True, db_index=True)
     nome = models.CharField(max_length=200)
     unidade = models.CharField(max_length=12, default="UN")
     preco_venda = models.DecimalField(max_digits=12, decimal_places=2)
@@ -183,3 +185,44 @@ class MovimentacaoEstoque(models.Model):
 
     class Meta:
         ordering = ("-criado_em",)
+
+
+class InventarioContagem(models.Model):
+    class Estado(models.TextChoices):
+        PROGRAMADO = "PROGRAMADO", "Programado"
+        ABERTO = "ABERTO", "Em contagem"
+        CONCLUIDO = "CONCLUIDO", "Concluído"
+
+    empresa = models.ForeignKey(Empresa, on_delete=models.CASCADE, related_name="contagens")
+    setor = models.CharField(max_length=80)
+    data_programada = models.DateField(db_index=True)
+    quantidade_itens = models.PositiveIntegerField(default=20)
+    estado = models.CharField(max_length=12, choices=Estado.choices, default=Estado.PROGRAMADO)
+    criado_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="contagens_criadas")
+    criado_em = models.DateTimeField(auto_now_add=True)
+    iniciado_em = models.DateTimeField(null=True, blank=True)
+    concluido_em = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("data_programada", "setor")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("empresa", "data_programada", "setor"),
+                name="uniq_contagem_dia_setor_empresa",
+            )
+        ]
+
+
+class ItemContagem(models.Model):
+    contagem = models.ForeignKey(InventarioContagem, on_delete=models.CASCADE, related_name="itens")
+    produto = models.ForeignKey(Produto, on_delete=models.PROTECT, related_name="contagens")
+    saldo_sistema = models.DecimalField(max_digits=14, decimal_places=3)
+    quantidade_contada = models.DecimalField(max_digits=14, decimal_places=3, null=True, blank=True)
+    diferenca = models.DecimalField(max_digits=14, decimal_places=3, null=True, blank=True)
+    contado_por = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
+    contado_em = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=("contagem", "produto"), name="uniq_produto_contagem")
+        ]
