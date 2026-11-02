@@ -67,3 +67,10 @@ class LocalStore:
                 "UPDATE pending_sales SET last_error=? WHERE idempotency_key=?",
                 (str(error)[:500], idempotency_key),
             )
+
+    def save_receipt(self, sale_id, text):
+        folder = Path(self.path).parent / "comprovantes"
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / f"cupom-{sale_id}.txt"
+        path.write_text(text, encoding="utf-8")
+        return path
