@@ -89,6 +89,14 @@ def importar_planilha(*, empresa, usuario, arquivo):
             empresa=empresa, codigo=data["codigo"]
         ).first()
         if product:
+            if ItemContagem.objects.filter(
+                contagem__empresa=empresa,
+                contagem__estado=InventarioContagem.Estado.ABERTO,
+                produto=product,
+            ).exists():
+                raise ValidationError({
+                    "planilha": f"O produto {product.codigo} está em contagem física. Tente novamente depois."
+                })
             previous_stock = product.estoque_atual
             for field in ("nome", "unidade", "preco_venda", "estoque_minimo",
                           "setor", "endereco", "codigo_barras"):
@@ -120,7 +128,7 @@ def gerar_contagens_aleatorias(*, empresa, usuario, quantidade, itens_por_contag
         .exclude(setor="").values_list("setor", flat=True).distinct()
     )
     if not sectors:
-        raise ValidationError({"inventario": "Cadastre/import products with sector and address first."})
+        raise ValidationError({"inventario": "Cadastre ou importe produtos com setor e endereço antes de sortear contagens."})
     slots = []
     today = timezone.localdate()
     for day_offset in range(1, 31):
