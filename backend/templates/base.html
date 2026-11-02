@@ -1,12 +1,12 @@
 <!doctype html>
 <html lang="pt-BR">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><link rel="icon" href="/static/brand/appdv-icon.ico"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{% block title %}Armazém PDV{% endblock %}</title>
 <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-<header class="topbar"><a class="brand" href="/">ARMAZÉM<span>PDV</span></a>
+<header class="topbar"><a class="brand" href="/" aria-label="ApPdv"><img src="/static/brand/appdv-logo-web.png" alt="ApPdv — Sistema de vendas e gerenciamento para armazéns"></a>
 {% if user.is_authenticated %}<div class="top-actions"><span>{{ user.get_username }}</span><form method="post" action="{% url 'logout' %}">{% csrf_token %}<button class="ghost" type="submit">Sair</button></form></div>{% endif %}
 </header>
 <main class="wrap">
