@@ -1,0 +1,16 @@
+{% extends "base.html" %}{% block title %}Painel Master · Armazém PDV{% endblock %}
+{% block content %}
+<div class="page-head"><div><p class="eyebrow">CONTROLE DA PLATAFORMA</p><h1>Painel Master</h1><p>Gerencie empresas e acessos da plataforma.</p></div><span class="badge master">MASTER</span></div>
+<section class="stats"><article class="stat"><small>Empresas</small><strong>{{ total_empresas }}</strong></article><article class="stat"><small>Ativas</small><strong>{{ empresas_ativas }}</strong></article><article class="stat"><small>Usuários</small><strong>{{ total_usuarios }}</strong></article></section>
+<div class="grid two"><section class="panel"><div class="panel-head"><h2>Cadastrar empresa</h2><p>Cria a empresa e seu primeiro administrador.</p></div>
+<form method="post" action="{% url 'master-criar-empresa' %}" class="form-grid">{% csrf_token %}
+{% for field in form %}<label>{{ field.label }}{{ field }}{% if field.errors %}<em>{{ field.errors|join:", " }}</em>{% endif %}</label>{% endfor %}
+<button class="primary" type="submit">Criar empresa</button></form></section>
+<section class="panel"><div class="panel-head"><h2>Adicionar membro existente</h2><p>Vincule um usuário cadastrado a uma empresa.</p></div>
+{% for empresa in empresas %}<form method="post" action="{% url 'master-adicionar-membro' empresa.id %}" class="inline-form">{% csrf_token %}<strong>{{ empresa.nome }}</strong><input name="usuario" placeholder="Nome de usuário" required><select name="papel"><option value="CAIXA">Caixa</option><option value="GERENTE">Gerente</option><option value="ADMIN">Administrador</option></select><button class="secondary">Vincular</button></form>{% empty %}<p>Cadastre uma empresa para começar.</p>{% endfor %}</section></div>
+<section class="panel"><div class="panel-head"><h2>Empresas cadastradas</h2><p>Os dados operacionais permanecem isolados por empresa.</p></div>
+<div class="table-wrap"><table><thead><tr><th>Empresa</th><th>Slug</th><th>Membros</th><th>Produtos</th><th>Status</th><th>Ação</th></tr></thead><tbody>
+{% for empresa in empresas %}<tr><td><strong>{{ empresa.nome }}</strong><small>{{ empresa.cnpj|default:"Sem CNPJ" }}</small></td><td>{{ empresa.slug }}</td><td>{{ empresa.total_membros }}</td><td>{{ empresa.total_produtos }}</td><td><span class="badge {% if empresa.ativa %}good{% else %}bad{% endif %}">{% if empresa.ativa %}Ativa{% else %}Suspensa{% endif %}</span></td>
+<td><form method="post" action="{% url 'master-status-empresa' empresa.id %}">{% csrf_token %}<button class="{% if empresa.ativa %}danger{% else %}secondary{% endif %}">{% if empresa.ativa %}Suspender{% else %}Reativar{% endif %}</button></form></td></tr>{% empty %}<tr><td colspan="6">Nenhuma empresa cadastrada.</td></tr>{% endfor %}
+</tbody></table></div></section>
+{% endblock %}
