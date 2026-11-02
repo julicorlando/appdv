@@ -163,7 +163,7 @@ class TokenAutorizacao(models.Model):
 
     @classmethod
     def gerar_codigo(cls):
-        return secrets.token_urlsafe(8)
+        return secrets.token_urlsafe(16)
 
     def esta_valido(self):
         return self.usado_em is None and self.revogado_em is None and self.expira_em > timezone.now()
