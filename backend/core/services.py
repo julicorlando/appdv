@@ -110,11 +110,13 @@ def registrar_venda(*, empresa, usuario, dados):
             empresa=empresa, venda=venda, produto=produto, quantidade=quantidade,
             preco_unitario=produto.preco_venda, desconto=desconto, total=total_linha,
         )
-        produto.estoque_atual -= quantidade
+    for produto_id, quantidade_total in estoque_solicitado.items():
+        produto = produtos_travados[produto_id]
+        produto.estoque_atual -= quantidade_total
         produto.save(update_fields=("estoque_atual", "atualizado_em"))
         MovimentacaoEstoque.objects.create(
             empresa=empresa, produto=produto, tipo=MovimentacaoEstoque.Tipo.VENDA,
-            quantidade=-quantidade, referencia=f"Venda #{venda.pk}", operador=usuario,
+            quantidade=-quantidade_total, referencia=f"Venda #{venda.pk}", operador=usuario,
         )
     for meio, valor, referencia in valores_pagamento:
         Transacao.objects.create(
