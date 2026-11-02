@@ -271,7 +271,8 @@ def baixar_modelo_planilha(request, empresa_id):
     require_membership(
         request, empresa_id, (MembroEmpresa.Papel.ADMIN, MembroEmpresa.Papel.GERENTE)
     )
-    from openpyxl import Workbook\n    from openpyxl.styles import Font
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Produtos"
