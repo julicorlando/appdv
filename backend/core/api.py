@@ -1,6 +1,6 @@
 from datetime import timedelta
 from django.utils import timezone
-from rest_framework import viewsets, status
+from rest_framework import mixins, viewsets, status
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
@@ -67,8 +67,11 @@ class ProdutoViewSet(TenantViewSet):
         return Produto.objects.filter(empresa=self.get_empresa(), ativo=True).select_related("categoria").order_by("nome")
 
 
-class VendaViewSet(TenantViewSet):
+class VendaViewSet(viewsets.GenericViewSet, mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.CreateModelMixin):
+    permission_classes = [IsAuthenticated]
     serializer_class = VendaSerializer
+    def get_empresa(self):
+        return TenantViewSet.get_empresa(self)
     def get_queryset(self):
         empresa = self.get_empresa()
         qs = Venda.objects.filter(empresa=empresa).select_related("caixa", "operador").prefetch_related("itens")
