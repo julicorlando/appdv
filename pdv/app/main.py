@@ -10,7 +10,7 @@ from PySide6.QtGui import QIcon
 import requests
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout,
-    QInputDialog, QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton,
+    QInputDialog, QLineEdit, QLabel, QMainWindow, QMessageBox, QPushButton,
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -78,11 +78,14 @@ class PDVWindow(QMainWindow):
         self.refresh.clicked.connect(self._load_catalog)
         self.close_cash = QPushButton("Fechar caixa")
         self.close_cash.clicked.connect(self._close_cash)
+        self.cancel_sale = QPushButton("Cancelar venda…")
+        self.cancel_sale.clicked.connect(self._cancel_sale)
         header.addWidget(QLabel("Empresa"))
         header.addWidget(self.company, 1)
         header.addWidget(self.status)
         header.addWidget(self.refresh)
         header.addWidget(self.close_cash)
+        header.addWidget(self.cancel_sale)
         layout.addLayout(header)
 
         search = QHBoxLayout()
@@ -277,6 +280,35 @@ class PDVWindow(QMainWindow):
             )
         except Exception as exc:
             QMessageBox.critical(self, "Venda recusada", str(exc))
+
+    def _cancel_sale(self):
+        sale_id, ok = QInputDialog.getInt(self, "Cancelar venda", "Número da venda:")
+        if not ok:
+            return
+        token, ok = QInputDialog.getText(
+            self, "Autorização do gerente", "Token temporário:",
+            QLineEdit.EchoMode.Password,
+        )
+        if not ok or not token:
+            return
+        reason, ok = QInputDialog.getText(
+            self, "Justificativa", "Motivo do cancelamento:"
+        )
+        if not ok or not reason.strip():
+            QMessageBox.warning(self, "Justificativa obrigatória", "Informe o motivo do cancelamento.")
+            return
+        confirm = QMessageBox.question(
+            self, "Confirmar cancelamento",
+            f"Cancelar a venda #{sale_id}? O estoque será devolvido e a operação ficará auditada.",
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self.api.cancelar_venda(sale_id, token, reason)
+            QMessageBox.information(self, "Venda cancelada", f"A venda #{sale_id} foi cancelada.")
+            self._load_catalog()
+        except Exception as exc:
+            QMessageBox.critical(self, "Cancelamento recusado", str(exc))
 
     def _close_cash(self):
         if not self.cash_id:
