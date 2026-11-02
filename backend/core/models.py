@@ -72,7 +72,7 @@ class Produto(models.Model):
         constraints = [
             models.UniqueConstraint(fields=("empresa", "codigo"), name="uniq_codigo_produto_empresa"),
         ]
-        indexes = [models.Index(fields=("empresa", "nome")), models.Index(fields=("empresa", "codigo_barras"))]
+        indexes = [models.Index(fields=("empresa", "nome"), name="prod_tenant_name_idx"), models.Index(fields=("empresa", "codigo_barras"), name="prod_tenant_barcode_idx")]
 
     def __str__(self):
         return f"{self.codigo} — {self.nome}"
