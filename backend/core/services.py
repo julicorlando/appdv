@@ -3,7 +3,7 @@ from decimal import Decimal, InvalidOperation
 from django.db import transaction
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
-from .models import Caixa, ItemVenda, Produto, Transacao, Venda, TokenAutorizacao
+from .models import Caixa, ItemVenda, MovimentacaoEstoque, Produto, Transacao, Venda, TokenAutorizacao
 
 
 @transaction.atomic
@@ -14,6 +14,8 @@ def registrar_venda(*, empresa, usuario, dados):
         raise ValidationError({"idempotency_key": "Informe um UUID válido."})
     existente = Venda.objects.filter(empresa=empresa, idempotency_key=chave).first()
     if existente:
+        if existente.operador_id != usuario.pk:
+            raise ValidationError({"idempotency_key": "Esta chave já foi usada por outro operador."})
         return existente, False
     caixa_id = dados.get("caixa")
     try:
@@ -30,7 +32,7 @@ def registrar_venda(*, empresa, usuario, dados):
         raise ValidationError({"pagamentos": "Informe ao menos uma forma de pagamento."})
 
     subtotal = Decimal("0.00")
-    itens_calculados = []
+    itens_calculados = []\n    estoque_solicitado = {}
     for linha in linhas:
         try:
             produto = Produto.objects.select_for_update().get(
@@ -56,7 +58,7 @@ def registrar_venda(*, empresa, usuario, dados):
         subtotal += bruto
         itens_calculados.append((produto, quantidade, desconto, total_linha))
 
-    desconto_total = sum((item[2] for item in itens_calculados), Decimal("0"))
+    for produto_id, quantidade_total in estoque_solicitado.items():\n        produto = Produto.objects.get(pk=produto_id, empresa=empresa)\n        if produto.estoque_atual < quantidade_total:\n            raise ValidationError({"itens": f"Estoque insuficiente para {produto.nome}."})\n\n    desconto_total = sum((item[2] for item in itens_calculados), Decimal("0"))
     total = subtotal - desconto_total
     valores_pagamento = []
     soma_pagamentos = Decimal("0")
