@@ -51,6 +51,22 @@ class ArmazemAPI:
         response.raise_for_status()
         return response.json()
 
+    def resumo_caixa(self, caixa_id):
+        response = self.session.get(
+            f"{self.base_url}/api/v1/caixas/{caixa_id}/resumo/", timeout=self.timeout
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def movimentar_caixa(self, caixa_id, tipo, valor, motivo):
+        response = self.session.post(
+            f"{self.base_url}/api/v1/caixas/movimentacoes/",
+            json={"caixa": caixa_id, "tipo": tipo, "valor": str(valor), "motivo": motivo},
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        return response.json()
+
     def fechar_caixa(self, caixa_id, saldo_fechamento):
         response = self.session.post(
             f"{self.base_url}/api/v1/caixas/{caixa_id}/fechar/",
