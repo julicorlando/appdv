@@ -38,6 +38,8 @@ Para executar também o backend em container, copie primeiro `backend/.env.examp
 
 Entre em `http://127.0.0.1:8000/master/` com a conta superusuária para cadastrar a primeira empresa e os usuários. O painel técnico Django fica em `/admin/`.
 
+A entrada de compras fica no painel da empresa em **Compras e NF-e**. O recebimento só pode ser feito por gerente/administrador e exige associar todos os itens a produtos ativos da própria empresa. A confirmação registra a movimentação de entrada de cada produto.
+
 ## PDV Windows
 
 No Windows, instale Python 3.10+ e execute `pdv/build_windows.bat`. O PyInstaller gera `pdv/dist/ApPdv.exe` com o ícone do kit. Com Inno Setup (`ISCC.exe`) instalado, o mesmo script também gera `pdv/dist/installer/ApPdv-Setup.exe`. Configure `APPDV_API_URL` ou informe o endereço do servidor na tela de login.
