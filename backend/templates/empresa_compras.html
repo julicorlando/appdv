@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Compras e notas de entrada · {{ empresa.nome }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <p class="eyebrow"><a href="{% url 'empresa-dashboard' empresa.id %}">{{ empresa.nome }}</a></p>
+    <h1>Compras e notas de entrada</h1>
+    <p>Importe o XML da NF-e, confira os produtos e só então confirme a entrada no estoque.</p>
+  </div>
+  <nav class="nav-links">
+    <a class="secondary" href="{% url 'empresa-dashboard' empresa.id %}">Painel</a>
+    <a class="secondary" href="{% url 'empresa-produtos' empresa.id %}">Produtos</a>
+  </nav>
+</div>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Importar NF-e de entrada</h2>
+    <p>O número, a série, a chave, o fornecedor e os itens serão lidos do XML. A importação cria um rascunho e não altera o estoque.</p>
+  </div>
+  <form method="post" enctype="multipart/form-data" class="form-grid">
+    {% csrf_token %}
+    <input type="hidden" name="acao" value="importar_xml">
+    <label class="span-2">Arquivo XML autorizado da NF-e
+      <input type="file" name="arquivo_xml" accept=".xml,application/xml,text/xml" required>
+    </label>
+    <button class="primary" type="submit">Importar e conferir produtos</button>
+  </form>
+  <p class="hint">Limite de 5 MB por XML. Notas repetidas na empresa são recusadas. Para atualizar o estoque, a nota precisa ser conferida e recebida abaixo.</p>
+</section>
+
+{% for compra in compras %}
+<section class="panel">
+  <div class="panel-head">
+    <div class="purchase-heading">
+      <div>
+        <h2>NF {{ compra.numero_nf }}{% if compra.serie %} · Série {{ compra.serie }}{% endif %}</h2>
+        <p>{{ compra.fornecedor.nome }}{% if compra.emitente_cnpj %} · CNPJ {{ compra.emitente_cnpj }}{% endif %}</p>
+        <p>Emissão: {{ compra.data_emissao|date:"d/m/Y"|default:"—" }} · Chave: {{ compra.chave_acesso|default:"não informada" }}</p>
+      </div>
+      <span class="badge {% if compra.estado == 'RECEBIDA' %}good{% elif compra.estado == 'CANCELADA' %}bad{% endif %}">{{ compra.get_estado_display }}</span>
+    </div>
+  </div>
+
+  {% if compra.estado == "RASCUNHO" %}
+  <form method="post">
+    {% csrf_token %}
+    <input type="hidden" name="acao" value="receber">
+    <input type="hidden" name="compra" value="{{ compra.id }}">
+  {% endif %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Código na NF</th><th>Produto da NF</th><th>Qtd.</th><th>Unidade</th><th>Custo unitário</th><th>Total</th>{% if compra.estado == "RASCUNHO" %}<th>Produto no sistema</th>{% endif %}</tr></thead>
+      <tbody>
+      {% for item in compra.itens.all %}
+        <tr>
+          <td>{{ item.codigo_xml|default:"—" }}</td>
+          <td>{{ item.descricao_xml }}</td>
+          <td>{{ item.quantidade|floatformat:3 }}</td>
+          <td>{{ item.unidade_xml|default:"—" }}</td>
+          <td>R$ {{ item.custo_unitario|floatformat:4 }}</td>
+          <td>R$ {{ item.total|floatformat:2 }}</td>
+          {% if compra.estado == "RASCUNHO" %}
+          <td>
+            <select name="produto_{{ item.id }}" required>
+              <option value="">Selecione para associar</option>
+              {% for produto in produtos %}
+                <option value="{{ produto.id }}" {% if item.produto_id == produto.id %}selected{% endif %}>{{ produto.codigo }} · {{ produto.nome }} ({{ produto.unidade }})</option>
+              {% endfor %}
+            </select>
+          </td>
+          {% endif %}
+        </tr>
+      {% empty %}
+        <tr><td colspan="7">Esta nota não contém itens.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="purchase-total">Total da NF-e: <strong>R$ {{ compra.valor_total|floatformat:2 }}</strong></p>
+  {% if compra.estado == "RASCUNHO" %}
+    <p class="hint">Confira cada associação. Ao receber, as quantidades entram no estoque e o custo médio é recalculado. A ação não pode ser repetida para esta nota.</p>
+    <button class="primary" type="submit">Confirmar recebimento e atualizar estoque</button>
+  </form>
+  {% elif compra.recebido_em %}
+    <p class="hint">Recebida em {{ compra.recebido_em|date:"d/m/Y H:i" }} por {{ compra.recebido_por.get_username }}.</p>
+  {% endif %}
+</section>
+{% empty %}
+<section class="empty"><h2>Nenhuma NF-e importada</h2><p>Envie o XML da primeira nota para conferir os itens e registrar a entrada.</p></section>
+{% endfor %}
+{% endblock %}
