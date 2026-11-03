@@ -492,6 +492,8 @@ class PedidosWebView(TenantAPIView):
             "id": pedido.pk, "codigo_publico": str(pedido.codigo_publico),
             "cliente_nome": pedido.cliente_nome, "cliente_telefone": pedido.cliente_telefone,
             "estado": pedido.estado, "subtotal": str(pedido.subtotal), "total": str(pedido.total),
+            "endereco_entrega": pedido.endereco_entrega,
+            "entrega_solicitada_em": pedido.entrega_solicitada_em,
             "criado_em": pedido.criado_em, "expira_em": pedido.expira_em,
             "public_url": request.build_absolute_uri(
                 reverse("pedido-publico", kwargs={"codigo": pedido.codigo_publico})
@@ -512,6 +514,14 @@ class PedidosWebView(TenantAPIView):
         empresa, membro = self.get_empresa(request)
         nome = str(request.data.get("cliente_nome", "")).strip()[:160]
         telefone = re.sub(r"\D", "", str(request.data.get("cliente_telefone", "")))
+        endereco_entrega = str(request.data.get("endereco_entrega", "")).strip()[:250]
+        raw_delivery = str(request.data.get("entrega_solicitada_em", "")).strip()
+        try:
+            entrega_solicitada_em = date.fromisoformat(raw_delivery) if raw_delivery else None
+            if entrega_solicitada_em and entrega_solicitada_em < timezone.localdate():
+                raise ValueError
+        except ValueError:
+            raise ValidationError({"entrega_solicitada_em": "A data de entrega deve ser hoje ou uma data futura."})
         linhas = request.data.get("itens")
         if not nome or not (10 <= len(telefone) <= 15):
             raise ValidationError({"cliente": "Informe nome e telefone com DDD e código do país, se necessário."})
@@ -542,6 +552,7 @@ class PedidosWebView(TenantAPIView):
                 raise ValidationError({"itens": f"Estoque insuficiente para {produto.nome}."})
         pedido = PedidoWeb.objects.create(
             empresa=empresa, cliente_nome=nome, cliente_telefone=telefone,
+            endereco_entrega=endereco_entrega, entrega_solicitada_em=entrega_solicitada_em,
             estado=PedidoWeb.Estado.AGUARDANDO_CLIENTE, subtotal=subtotal,
             total=subtotal, desconto=Decimal("0"), criado_por=request.user,
             expira_em=timezone.now() + timedelta(days=7),
