@@ -4,7 +4,7 @@ import base64
 import mimetypes
 from django.utils import timezone
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import F, Sum
 from django.urls import reverse
 from rest_framework import mixins, viewsets, status
 from rest_framework.decorators import action
@@ -48,6 +48,34 @@ class EmpresaInfoView(TenantAPIView):
         return Response({
             "id": empresa.pk, "nome": empresa.nome, "cnpj": empresa.cnpj,
             "logo_data_url": logo_data_url,
+        })
+
+
+class DashboardEmpresaAPIView(TenantAPIView):
+    def get(self, request):
+        from .models import MembroEmpresa
+        empresa, membro = self.get_empresa(request)
+        if membro.papel not in (MembroEmpresa.Papel.ADMIN, MembroEmpresa.Papel.GERENTE):
+            raise PermissionDenied("A área administrativa exige perfil de gerente ou administrador.")
+        hoje = timezone.localdate()
+        vendas = Venda.objects.filter(
+            empresa=empresa, estado=Venda.Estado.CONCLUIDA
+        )
+        dia = vendas.filter(realizada_em__date=hoje)
+        mes = vendas.filter(realizada_em__year=hoje.year, realizada_em__month=hoje.month)
+        return Response({
+            "empresa": empresa.nome,
+            "produtos_ativos": Produto.objects.filter(empresa=empresa, ativo=True).count(),
+            "estoque_baixo": Produto.objects.filter(
+                empresa=empresa, ativo=True, estoque_atual__lte=F("estoque_minimo")
+            ).count(),
+            "vendas_hoje": dia.count(),
+            "faturamento_hoje": str(dia.aggregate(total=Sum("total"))["total"] or 0),
+            "vendas_mes": mes.count(),
+            "faturamento_mes": str(mes.aggregate(total=Sum("total"))["total"] or 0),
+            "pedidos_confirmados": PedidoWeb.objects.filter(
+                empresa=empresa, estado=PedidoWeb.Estado.CONFIRMADO
+            ).count(),
         })
 
 
