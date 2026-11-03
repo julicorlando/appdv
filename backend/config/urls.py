@@ -39,6 +39,7 @@ urlpatterns = [
     path("pedido/<uuid:codigo>/", web.pedido_publico, name="pedido-publico"),
     path("empresa/<int:empresa_id>/categorias/criar/", web.empresa_categoria, name="empresa-categoria"),
     path("empresa/<int:empresa_id>/produtos/<int:produto_id>/entrada/", web.empresa_entrada_estoque, name="empresa-entrada-estoque"),
+    path("empresa/<int:empresa_id>/produtos/<int:produto_id>/perda/", web.empresa_baixa_perda, name="empresa-baixa-perda"),
     path("empresa/<int:empresa_id>/autorizacoes/", web.empresa_autorizacao, name="empresa-autorizacao"),
     path("admin/", admin.site.urls),
     path("api/v1/auth/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
