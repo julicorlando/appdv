@@ -184,6 +184,43 @@ def empresa_configuracao(request, empresa_id):
 
 
 @login_required
+def empresa_baixa_perda(request, empresa_id, produto_id):
+    membro = require_membership(
+        request, empresa_id, (MembroEmpresa.Papel.ADMIN, MembroEmpresa.Papel.GERENTE)
+    )
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    try:
+        quantidade = Decimal(str(request.POST.get("quantidade", "")).replace(",", "."))
+        motivo = request.POST.get("motivo", "").strip()
+        if not quantidade.is_finite() or quantidade <= 0 or not motivo:
+            raise ValueError("Informe quantidade e motivo.")
+        with transaction.atomic():
+            produto = get_object_or_404(
+                Produto.objects.select_for_update(), pk=produto_id, empresa=membro.empresa
+            )
+            if ItemContagem.objects.filter(
+                contagem__empresa=membro.empresa,
+                contagem__estado=InventarioContagem.Estado.ABERTO,
+                produto=produto,
+            ).exists():
+                raise ValueError("Produto em inventário aberto; aguarde a conclusão.")
+            if quantidade > produto.estoque_atual:
+                raise ValueError("A perda informada excede o saldo disponível.")
+            produto.estoque_atual -= quantidade
+            produto.save(update_fields=("estoque_atual", "atualizado_em"))
+            MovimentacaoEstoque.objects.create(
+                empresa=membro.empresa, produto=produto,
+                tipo=MovimentacaoEstoque.Tipo.PERDA, quantidade=-quantidade,
+                referencia=("Perda: " + motivo)[:120], operador=request.user,
+            )
+        messages.success(request, f"Baixa de perda registrada para {produto.nome}.")
+    except Exception as exc:
+        messages.error(request, f"Não foi possível registrar a perda: {exc}")
+    return redirect("empresa-produtos", empresa_id=empresa_id)
+
+
+@login_required
 def empresa_produtos(request, empresa_id):
     membro = require_membership(
         request, empresa_id, (MembroEmpresa.Papel.ADMIN, MembroEmpresa.Papel.GERENTE)
