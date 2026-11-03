@@ -271,7 +271,6 @@ class ItemPedidoWeb(models.Model):
     preco_unitario = models.DecimalField(max_digits=12, decimal_places=2)
     total = models.DecimalField(max_digits=12, decimal_places=2)
 
-
 class Fornecedor(models.Model):
     """Fornecedor cadastrado dentro do tenant da empresa."""
     empresa = models.ForeignKey(Empresa, on_delete=models.CASCADE, related_name="fornecedores")
@@ -285,7 +284,10 @@ class Fornecedor(models.Model):
     class Meta:
         ordering = ("nome",)
         constraints = [
-            models.UniqueConstraint(fields=("empresa", "cnpj"), name="uniq_cnpj_fornecedor_empresa"),
+            models.UniqueConstraint(
+                fields=("empresa", "cnpj"), condition=~models.Q(cnpj=""),
+                name="uniq_cnpj_fornecedor_empresa",
+            ),
         ]
 
     def __str__(self):
