@@ -6,7 +6,7 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from .models import (
-    Caixa, InventarioContagem, ItemContagem, ItemVenda, MovimentacaoEstoque, Produto, TokenAutorizacao,
+    Caixa, InventarioContagem, ItemContagem, ItemVenda, MembroEmpresa, MovimentacaoEstoque, Produto, TokenAutorizacao,
     Transacao, Venda,
 )
 
@@ -39,6 +39,11 @@ def registrar_venda(*, empresa, usuario, dados):
     if not isinstance(pagamentos, list) or not pagamentos:
         raise ValidationError({"pagamentos": "Informe ao menos uma forma de pagamento."})
 
+    try:
+        membro = MembroEmpresa.objects.get(empresa=empresa, usuario=usuario, ativo=True)
+    except MembroEmpresa.DoesNotExist:
+        raise ValidationError({"empresa": "Usuário sem vínculo ativo com esta empresa."})
+
     subtotal = Decimal("0.00")
     itens_calculados = []
     estoque_solicitado = {}
@@ -63,6 +68,10 @@ def registrar_venda(*, empresa, usuario, dados):
             bruto = (produto.preco_venda * quantidade).quantize(Decimal("0.01"))
             if not desconto.is_finite() or desconto < 0 or desconto > bruto:
                 raise ValueError
+            if desconto > 0 and membro.papel == MembroEmpresa.Papel.CAIXA:
+                raise ValidationError({
+                    "desconto": "Descontos em venda exigem perfil de gerente ou administrador."
+                })
         except Produto.DoesNotExist:
             raise ValidationError({"itens": "Produto inexistente ou indisponível nesta empresa."})
         except (KeyError, ValueError, TypeError, InvalidOperation):
