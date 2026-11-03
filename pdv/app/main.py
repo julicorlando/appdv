@@ -68,6 +68,8 @@ class PDVWindow(QMainWindow):
         self.cash_id = None
         self.tenant_id = None
         self.company_info = {}
+        self.company_roles = {}
+        self.tenant_role = "CAIXA"
         self.setWindowTitle("ApPdv — Frente de Caixa")
         self.setWindowIcon(QIcon(asset_path("appdv-icon-256.png")))
         self.resize(1120, 740)
@@ -118,8 +120,8 @@ class PDVWindow(QMainWindow):
         self.catalog.cellDoubleClicked.connect(self._add_selected)
         layout.addWidget(self.catalog, 3)
 
-        self.cart_table = QTableWidget(0, 4)
-        self.cart_table.setHorizontalHeaderLabels(["Produto", "Qtd.", "Preço", "Total"])
+        self.cart_table = QTableWidget(0, 5)
+        self.cart_table.setHorizontalHeaderLabels(["Produto", "Qtd.", "Preço", "Desconto", "Total"])
         self.cart_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         layout.addWidget(self.cart_table, 2)
         cart_actions = QHBoxLayout()
@@ -127,6 +129,9 @@ class PDVWindow(QMainWindow):
         self.edit_cart_item.clicked.connect(self._edit_cart_item)
         self.remove_cart_item = QPushButton("Remover item")
         self.remove_cart_item.clicked.connect(self._remove_cart_item)
+        self.discount_cart_item = QPushButton("Aplicar desconto…")
+        self.discount_cart_item.clicked.connect(self._discount_cart_item)
+        self.discount_cart_item.setEnabled(False)
         self.hold_cart = QPushButton("Suspender venda")
         self.hold_cart.clicked.connect(self._suspend_sale)
         self.resume_cart = QPushButton("Retomar venda")
@@ -135,6 +140,7 @@ class PDVWindow(QMainWindow):
         cart_actions.addWidget(self.resume_cart)
         cart_actions.addWidget(self.edit_cart_item)
         cart_actions.addWidget(self.remove_cart_item)
+        cart_actions.addWidget(self.discount_cart_item)
         cart_actions.addStretch(1)
         layout.addLayout(cart_actions)
 
@@ -159,6 +165,7 @@ class PDVWindow(QMainWindow):
             companies = self.api.minhas_empresas()
             for company in companies:
                 self.company.addItem(company["nome"], company["id"])
+                self.company_roles[str(company["id"])] = company.get("papel", "CAIXA")
             self.company.currentIndexChanged.connect(self._company_changed)
             if companies:
                 self._company_changed(0)
@@ -173,6 +180,8 @@ class PDVWindow(QMainWindow):
         if index < 0:
             return
         self.tenant_id = str(self.company.currentData())
+        self.tenant_role = self.company_roles.get(self.tenant_id, "CAIXA")
+        self.discount_cart_item.setEnabled(self.tenant_role in ("ADMIN", "GERENTE"))
         self.api.selecionar_empresa(self.tenant_id)
         try:
             self.company_info = self.api.empresa_info()
@@ -269,7 +278,10 @@ class PDVWindow(QMainWindow):
                 self, "Estoque", "A quantidade excede o saldo disponível no último catálogo."
             )
             return
-        self.cart[product_id] = {"produto": product, "quantidade": quantity}
+        prior_discount = self.cart.get(product_id, {}).get("desconto", Decimal("0"))
+        self.cart[product_id] = {
+            "produto": product, "quantidade": quantity, "desconto": prior_discount,
+        }
         self._render_cart()
 
     def _suspend_sale(self):
@@ -284,7 +296,10 @@ class PDVWindow(QMainWindow):
             return
         payload = {
             "items": [
-                {"produto": product_id, "quantidade": str(item["quantidade"])}
+                {
+                    "produto": product_id, "quantidade": str(item["quantidade"]),
+                    "desconto": str(item.get("desconto", Decimal("0"))),
+                }
                 for product_id, item in self.cart.items()
             ]
         }
@@ -354,7 +369,32 @@ class PDVWindow(QMainWindow):
         if Decimal(str(quantity)) > available:
             QMessageBox.warning(self, "Estoque", "A quantidade excede o saldo disponível.")
             return
-        self.cart[product_id]["quantidade"] = Decimal(str(quantity)).quantize(Decimal("0.001"))
+        new_quantity = Decimal(str(quantity)).quantize(Decimal("0.001"))
+        gross = (Decimal(str(product["preco_venda"])) * new_quantity).quantize(Decimal("0.01"))
+        self.cart[product_id]["quantidade"] = new_quantity
+        if self.cart[product_id].get("desconto", Decimal("0")) > gross:
+            self.cart[product_id]["desconto"] = Decimal("0")
+        self._render_cart()
+
+    def _discount_cart_item(self):
+        if self.tenant_role not in ("ADMIN", "GERENTE"):
+            QMessageBox.warning(self, "Desconto", "Descontos exigem perfil de gerente ou administrador.")
+            return
+        row = self.cart_table.currentRow()
+        entries = list(self.cart.items())
+        if row < 0 or row >= len(entries):
+            QMessageBox.information(self, "Desconto", "Selecione um item do carrinho.")
+            return
+        product_id, item = entries[row]
+        product = item["produto"]
+        gross = (Decimal(str(product["preco_venda"])) * item["quantidade"]).quantize(Decimal("0.01"))
+        discount, accepted = QInputDialog.getDouble(
+            self, "Desconto no item", "Desconto em reais (R$):",
+            float(item.get("desconto", Decimal("0"))), 0, float(gross), 2,
+        )
+        if not accepted:
+            return
+        self.cart[product_id]["desconto"] = Decimal(str(discount)).quantize(Decimal("0.01"))
         self._render_cart()
 
     def _remove_cart_item(self):
@@ -375,9 +415,11 @@ class PDVWindow(QMainWindow):
             price = Decimal(str(product["preco_venda"]))
             line_total = quantity * price
             total += line_total
+            discount = Decimal(str(item.get("desconto", "0")))
+            line_total = (quantity * price - discount).quantize(Decimal("0.01"))
             values = [
                 product["nome"], str(quantity), f"R$ {price:.2f}",
-                f"R$ {line_total:.2f}",
+                f"R$ {discount:.2f}", f"R$ {line_total:.2f}",
             ]
             for col, value in enumerate(values):
                 self.cart_table.setItem(row, col, QTableWidgetItem(str(value)))
@@ -450,6 +492,7 @@ class PDVWindow(QMainWindow):
             return
         total = sum(
             (Decimal(str(item["produto"]["preco_venda"])) * item["quantidade"]
+             - Decimal(str(item.get("desconto", "0")))
              for item in self.cart.values()),
             Decimal("0"),
         ).quantize(Decimal("0.01"))
@@ -463,7 +506,10 @@ class PDVWindow(QMainWindow):
             "caixa": self.cash_id,
             "observacao": "",
             "itens": [
-                {"produto": product_id, "quantidade": str(item["quantidade"]), "desconto": "0"}
+                {
+                    "produto": product_id, "quantidade": str(item["quantidade"]),
+                    "desconto": str(item.get("desconto", Decimal("0"))),
+                }
                 for product_id, item in self.cart.items()
             ],
             "pagamentos": payments,
@@ -497,6 +543,12 @@ class PDVWindow(QMainWindow):
     def _create_web_order(self):
         if not self.cart:
             QMessageBox.information(self, "Carrinho vazio", "Adicione produtos antes de criar o pedido.")
+            return
+        if any(item.get("desconto", Decimal("0")) > 0 for item in self.cart.values()):
+            QMessageBox.warning(
+                self, "Desconto",
+                "Pedidos enviados pelo WhatsApp ainda não aceitam descontos. Remova os descontos antes de criar o pedido.",
+            )
             return
         nome, ok = QInputDialog.getText(self, "Pedido via WhatsApp", "Nome do cliente:")
         if not ok or not nome.strip():
@@ -558,12 +610,13 @@ class PDVWindow(QMainWindow):
             product = item["produto"]
             quantity = item["quantidade"]
             price = Decimal(str(product["preco_venda"]))
-            line_total = (quantity * price).quantize(Decimal("0.01"))
+            discount = Decimal(str(item.get("desconto", "0")))
+            line_total = (quantity * price - discount).quantize(Decimal("0.01"))
             total += line_total
             rows.append(
                 f"<tr><td><b>{html.escape(str(product['codigo']))}</b> "
                 f"{html.escape(str(product['nome']))}<br>"
-                f"<small>{quantity} x R$ {price:.2f}</small></td>"
+                f"<small>{quantity} x R$ {price:.2f} · desconto R$ {discount:.2f}</small></td>"
                 f"<td class='right'>R$ {line_total:.2f}</td></tr>"
             )
         system_img = f"<img class='system-logo' src='{system_logo}' alt='ApPdv'>" if system_logo else ""
