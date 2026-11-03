@@ -231,3 +231,80 @@ def confirmar_recebimento(*, compra_id, empresa, usuario, mapeamentos=None):
     compra.recebido_em = timezone.now()
     compra.save(update_fields=("estado", "recebido_por", "recebido_em"))
     return compra
+
+
+
+@transaction.atomic
+def criar_compra_manual(*, empresa, usuario, dados):
+    """Cria rascunho de entrada digitada manualmente; não movimenta estoque."""
+    numero = str(dados.get("numero_nf", "")).strip()[:20]
+    serie = str(dados.get("serie", "")).strip()[:10]
+    nome = str(dados.get("fornecedor", "")).strip()[:180]
+    cnpj = "".join(ch for ch in str(dados.get("cnpj", "")) if ch.isdigit())[:14]
+    chave = "".join(ch for ch in str(dados.get("chave_acesso", "")) if ch.isdigit())[:44]
+    if not numero or not nome:
+        raise ValidationError({"nota": "Informe o número da NF e o nome do fornecedor."})
+    if cnpj and len(cnpj) not in (11, 14):
+        raise ValidationError({"cnpj": "Informe um CPF/CNPJ válido ou deixe em branco."})
+
+    produto_ids = dados.getlist("produto")
+    quantities = dados.getlist("quantidade")
+    unit_costs = dados.getlist("custo_unitario")
+    if not produto_ids or len(produto_ids) > 100:
+        raise ValidationError({"itens": "Informe de 1 a 100 itens para a entrada manual."})
+    if not (len(produto_ids) == len(quantities) == len(unit_costs)):
+        raise ValidationError({"itens": "Revise os produtos, quantidades e custos informados."})
+    if CompraEntrada.objects.filter(
+        empresa=empresa, emitente_cnpj=cnpj, serie=serie, numero_nf=numero
+    ).exists() or (chave and CompraEntrada.objects.filter(
+        empresa=empresa, chave_acesso=chave
+    ).exists()):
+        raise ValidationError({"nota": "Esta nota já foi lançada para esta empresa."})
+
+    if cnpj:
+        fornecedor, _ = Fornecedor.objects.get_or_create(
+            empresa=empresa, cnpj=cnpj, defaults={"nome": nome}
+        )
+    else:
+        fornecedor = Fornecedor.objects.create(empresa=empresa, nome=nome)
+
+    emitted = None
+    raw_date = str(dados.get("data_emissao", "")).strip()
+    if raw_date:
+        try:
+            emitted = date.fromisoformat(raw_date)
+        except ValueError:
+            raise ValidationError({"data_emissao": "Informe uma data de emissão válida."})
+
+    compra = CompraEntrada.objects.create(
+        empresa=empresa, fornecedor=fornecedor, numero_nf=numero, serie=serie,
+        chave_acesso=chave, emitente_cnpj=cnpj, data_emissao=emitted,
+        criado_por=usuario,
+    )
+    total = Decimal("0.00")
+    seen = set()
+    for raw_id, raw_quantity, raw_cost in zip(produto_ids, quantities, unit_costs):
+        try:
+            produto = Produto.objects.get(pk=int(raw_id), empresa=empresa, ativo=True)
+            quantidade = Decimal(str(raw_quantity).replace(",", "."))
+            custo = Decimal(str(raw_cost).replace(",", "."))
+            if (not quantidade.is_finite() or quantidade <= 0
+                    or not custo.is_finite() or custo < 0):
+                raise ValueError
+        except Produto.DoesNotExist:
+            raise ValidationError({"itens": "Selecione produtos ativos desta empresa."})
+        except (ValueError, TypeError, InvalidOperation):
+            raise ValidationError({"itens": "Quantidade ou custo unitário inválido."})
+        if produto.pk in seen:
+            raise ValidationError({"itens": f"O produto {produto.codigo} está repetido. Some as quantidades em uma linha."})
+        seen.add(produto.pk)
+        line_total = (quantidade * custo).quantize(Decimal("0.01"))
+        ItemCompraEntrada.objects.create(
+            compra=compra, produto=produto, codigo_xml=produto.codigo,
+            descricao_xml=produto.nome, unidade_xml=produto.unidade,
+            quantidade=quantidade, custo_unitario=custo, total=line_total,
+        )
+        total += line_total
+    compra.valor_total = total
+    compra.save(update_fields=("valor_total",))
+    return compra
