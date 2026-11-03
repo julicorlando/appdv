@@ -4,7 +4,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from core.api import (
-    AbrirCaixaView, CategoriaViewSet, CriarTokenView, EmpresaInfoView, FecharCaixaView,
+    AbrirCaixaView, CaixaResumoView, CategoriaViewSet, CriarTokenView, EmpresaInfoView, FecharCaixaView, MovimentacaoCaixaView,
     MinhasEmpresasView, PedidosWebView, FinalizarPedidoWebView, ProdutoViewSet, VendaViewSet,
 )
 from core import web
@@ -44,6 +44,8 @@ urlpatterns = [
     path("api/v1/empresa/", EmpresaInfoView.as_view(), name="empresa-info"),
     path("api/v1/caixas/abrir/", AbrirCaixaView.as_view(), name="abrir-caixa"),
     path("api/v1/caixas/<int:caixa_id>/fechar/", FecharCaixaView.as_view(), name="fechar-caixa"),
+    path("api/v1/caixas/<int:caixa_id>/resumo/", CaixaResumoView.as_view(), name="resumo-caixa"),
+    path("api/v1/caixas/movimentacoes/", MovimentacaoCaixaView.as_view(), name="movimentacao-caixa"),
     path("api/v1/autorizacoes/", CriarTokenView.as_view(), name="criar-token"),
     path("api/v1/pedidos-web/", PedidosWebView.as_view(), name="pedidos-web"),
     path("api/v1/pedidos-web/<int:pedido_id>/finalizar/", FinalizarPedidoWebView.as_view(), name="pedido-web-finalizar"),
