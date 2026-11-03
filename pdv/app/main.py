@@ -84,6 +84,8 @@ class PDVWindow(QMainWindow):
         self.refresh.clicked.connect(self._load_catalog)
         self.web_orders = QPushButton("Pedidos confirmados")
         self.web_orders.clicked.connect(self._review_web_orders)
+        self.cash_move = QPushButton("Sangria / suprimento…")
+        self.cash_move.clicked.connect(self._cash_movement)
         self.close_cash = QPushButton("Fechar caixa")
         self.close_cash.clicked.connect(self._close_cash)
         self.cancel_sale = QPushButton("Cancelar venda…")
@@ -93,6 +95,7 @@ class PDVWindow(QMainWindow):
         header.addWidget(self.status)
         header.addWidget(self.refresh)
         header.addWidget(self.web_orders)
+        header.addWidget(self.cash_move)
         header.addWidget(self.close_cash)
         header.addWidget(self.cancel_sale)
         layout.addLayout(header)
@@ -119,6 +122,15 @@ class PDVWindow(QMainWindow):
         self.cart_table.setHorizontalHeaderLabels(["Produto", "Qtd.", "Preço", "Total"])
         self.cart_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         layout.addWidget(self.cart_table, 2)
+        cart_actions = QHBoxLayout()
+        self.edit_cart_item = QPushButton("Alterar quantidade")
+        self.edit_cart_item.clicked.connect(self._edit_cart_item)
+        self.remove_cart_item = QPushButton("Remover item")
+        self.remove_cart_item.clicked.connect(self._remove_cart_item)
+        cart_actions.addWidget(self.edit_cart_item)
+        cart_actions.addWidget(self.remove_cart_item)
+        cart_actions.addStretch(1)
+        layout.addLayout(cart_actions)
 
         footer = QHBoxLayout()
         self.total = QLabel("Total: R$ 0,00")
@@ -206,16 +218,33 @@ class PDVWindow(QMainWindow):
         query = self.query.text().strip().lower()
         if not query:
             return
-        product = next(
+        exact = next(
             (p for p in self.products if query in (
-                str(p.get("codigo", "")).lower(),
-                str(p.get("codigo_barras", "")).lower(),
+                str(p.get("codigo", "")).strip().lower(),
+                str(p.get("codigo_barras", "")).strip().lower(),
             )),
             None,
         )
-        if product:
-            self._add_product(product)
+        matches = [exact] if exact else [
+            p for p in self.products if query in str(p.get("nome", "")).lower()
+            or query in str(p.get("codigo", "")).lower()
+        ]
+        if len(matches) == 1:
+            self._add_product(matches[0])
             self.query.clear()
+        elif matches:
+            choices = [
+                f"{p.get('codigo','')} · {p.get('nome','')} · "
+                f"R$ {Decimal(str(p.get('preco_venda',0))):.2f} · saldo {p.get('estoque_atual',0)}"
+                for p in matches[:100]
+            ]
+            selected, accepted = QInputDialog.getItem(
+                self, "Selecionar produto", "Foram encontrados vários resultados:",
+                choices, 0, False,
+            )
+            if accepted:
+                self._add_product(matches[choices.index(selected)])
+                self.query.clear()
         else:
             QMessageBox.information(
                 self, "Produto não localizado", "Atualize o catálogo ou confira o código."
@@ -235,6 +264,36 @@ class PDVWindow(QMainWindow):
             )
             return
         self.cart[product_id] = {"produto": product, "quantidade": quantity}
+        self._render_cart()
+
+    def _edit_cart_item(self):
+        row = self.cart_table.currentRow()
+        entries = list(self.cart.items())
+        if row < 0 or row >= len(entries):
+            QMessageBox.information(self, "Carrinho", "Selecione um item do carrinho.")
+            return
+        product_id, item = entries[row]
+        product = item["produto"]
+        available = Decimal(str(product.get("estoque_atual", "0")))
+        quantity, accepted = QInputDialog.getDouble(
+            self, "Alterar quantidade", product["nome"],
+            float(item["quantidade"]), 0.001, float(available), 3,
+        )
+        if not accepted:
+            return
+        if Decimal(str(quantity)) > available:
+            QMessageBox.warning(self, "Estoque", "A quantidade excede o saldo disponível.")
+            return
+        self.cart[product_id]["quantidade"] = Decimal(str(quantity)).quantize(Decimal("0.001"))
+        self._render_cart()
+
+    def _remove_cart_item(self):
+        row = self.cart_table.currentRow()
+        entries = list(self.cart)
+        if row < 0 or row >= len(entries):
+            QMessageBox.information(self, "Carrinho", "Selecione um item do carrinho.")
+            return
+        self.cart.pop(entries[row], None)
         self._render_cart()
 
     def _render_cart(self):
@@ -570,18 +629,65 @@ button {{ width:100%; padding:10px; margin:12px 0; }}
         except Exception as exc:
             QMessageBox.critical(self, "Não foi possível finalizar", str(exc))
 
-    def _close_cash(self):
+    def _cash_movement(self):
         if not self.cash_id:
+            QMessageBox.warning(self, "Caixa", "Abra o caixa antes de registrar uma movimentação.")
             return
-        amount, accepted = QInputDialog.getDouble(
-            self, "Fechamento do caixa", "Valor contado em dinheiro (R$):",
-            0.00, 0.00, 10000000.00, 2,
+        kind, accepted = QInputDialog.getItem(
+            self, "Movimentação do caixa", "Tipo:", ["Sangria", "Suprimento"], 0, False
         )
         if not accepted:
             return
+        amount, accepted = QInputDialog.getDouble(
+            self, kind, "Valor (R$):", 0.00, 0.01, 10000000.00, 2,
+        )
+        if not accepted:
+            return
+        reason, accepted = QInputDialog.getText(
+            self, kind, "Motivo obrigatório:"
+        )
+        if not accepted or not reason.strip():
+            return
         try:
-            self.api.fechar_caixa(self.cash_id, amount)
-            QMessageBox.information(self, "Caixa fechado", "O caixa foi encerrado no servidor.")
+            self.api.movimentar_caixa(
+                self.cash_id, "SANGRIA" if kind == "Sangria" else "SUPRIMENTO",
+                amount, reason.strip(),
+            )
+            QMessageBox.information(self, "Caixa", f"{kind} registrada e auditada.")
+        except Exception as exc:
+            QMessageBox.critical(self, "Falha na movimentação", str(exc))
+
+    def _close_cash(self):
+        if not self.cash_id:
+            return
+        try:
+            summary = self.api.resumo_caixa(self.cash_id)
+            expected = Decimal(str(summary["esperado_dinheiro"]))
+        except Exception as exc:
+            QMessageBox.critical(self, "Fechamento do caixa", f"Não foi possível consultar o resumo: {exc}")
+            return
+        amount, accepted = QInputDialog.getDouble(
+            self, "Fechamento do caixa",
+            f"Dinheiro esperado: R$ {expected:.2f}\nInforme o valor contado (R$):",
+            float(expected), 0.00, 10000000.00, 2,
+        )
+        if not accepted:
+            return
+        difference = Decimal(str(amount)) - expected
+        confirm = QMessageBox.question(
+            self, "Confirmar fechamento",
+            f"Esperado: R$ {expected:.2f}\nContado: R$ {Decimal(str(amount)):.2f}\n"
+            f"Diferença: R$ {difference:.2f}\n\nFechar este caixa?",
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            result = self.api.fechar_caixa(self.cash_id, amount)
+            difference = Decimal(str(result.get("resumo", {}).get("diferenca_fechamento", difference)))
+            QMessageBox.information(
+                self, "Caixa fechado",
+                f"Caixa encerrado. Diferença apurada: R$ {difference:.2f}.",
+            )
             self.cash_id = None
             self.status.setText("Caixa fechado")
         except Exception as exc:
