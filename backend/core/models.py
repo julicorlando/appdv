@@ -90,6 +90,8 @@ class Caixa(models.Model):
     fechado_em = models.DateTimeField(null=True, blank=True)
     saldo_abertura = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     saldo_informado_fechamento = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    saldo_esperado_fechamento = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    diferenca_fechamento = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     estado = models.CharField(max_length=10, choices=Estado.choices, default=Estado.ABERTO)
 
 
