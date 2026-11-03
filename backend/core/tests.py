@@ -7,7 +7,7 @@ from rest_framework.test import APIClient
 
 from .models import (
     Categoria, Cliente, CompraEntrada, ContaPagar, ContaReceber, Empresa,
-    Fornecedor, ItemCompraEntrada, MembroEmpresa, Produto, PedidoWeb,
+    Fornecedor, ItemCompraEntrada, MembroEmpresa, Produto, PedidoWeb, MovimentacaoEstoque,
 )
 from .purchases import confirmar_recebimento
 
@@ -143,6 +143,21 @@ class SalesAndFinanceFlowTests(TestCase):
         order = PedidoWeb.objects.get(pk=response.data["id"])
         self.assertEqual(order.endereco_entrega, "Rua de Teste, 100")
         self.assertEqual(order.entrega_solicitada_em, timezone.localdate())
+
+    def test_stock_loss_reduces_balance_and_is_audited(self):
+        from django.test import Client
+        browser = Client()
+        browser.force_login(self.user)
+        response = browser.post(
+            f"/empresa/{self.company.pk}/produtos/{self.product.pk}/perda/",
+            {"quantidade": "3", "motivo": "Material danificado"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.estoque_atual, Decimal("97.000"))
+        movement = MovimentacaoEstoque.objects.get(produto=self.product)
+        self.assertEqual(movement.tipo, MovimentacaoEstoque.Tipo.PERDA)
+        self.assertEqual(movement.quantidade, Decimal("-3"))
 
     def test_company_finance_screens_render_for_member(self):
         from django.test import Client
