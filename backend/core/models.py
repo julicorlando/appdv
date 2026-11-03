@@ -271,6 +271,8 @@ class PedidoWeb(models.Model):
     codigo_publico = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     cliente_nome = models.CharField(max_length=160)
     cliente_telefone = models.CharField(max_length=20)
+    endereco_entrega = models.CharField(max_length=250, blank=True)
+    entrega_solicitada_em = models.DateField(null=True, blank=True)
     estado = models.CharField(max_length=20, choices=Estado.choices, default=Estado.AGUARDANDO_CLIENTE, db_index=True)
     subtotal = models.DecimalField(max_digits=12, decimal_places=2)
     desconto = models.DecimalField(max_digits=12, decimal_places=2, default=0)
