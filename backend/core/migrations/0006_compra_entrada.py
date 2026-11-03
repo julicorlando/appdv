@@ -50,7 +50,7 @@ class Migration(migrations.Migration):
         ),
         migrations.AddConstraint(
             model_name="compraentrada",
-            constraint=models.UniqueConstraint(fields=("empresa", "emitente_cnpj", "serie", "numero_nf"), name="uniq_nf_entrada_empresa_emitente"),
+            constraint=models.UniqueConstraint(condition=~models.Q(emitente_cnpj=""), fields=("empresa", "emitente_cnpj", "serie", "numero_nf"), name="uniq_nf_entrada_empresa_emitente"),
         ),
         migrations.AddConstraint(
             model_name="compraentrada",
