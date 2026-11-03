@@ -207,6 +207,7 @@ class MovimentacaoEstoque(models.Model):
         ENTRADA = "ENTRADA", "Entrada"
         VENDA = "VENDA", "Venda"
         DEVOLUCAO = "DEVOLUCAO", "Devolução"
+        PERDA = "PERDA", "Perda"
         AJUSTE = "AJUSTE", "Ajuste"
     empresa = models.ForeignKey(Empresa, on_delete=models.CASCADE, related_name="movimentacoes_estoque")
     produto = models.ForeignKey(Produto, on_delete=models.PROTECT, related_name="movimentacoes")
