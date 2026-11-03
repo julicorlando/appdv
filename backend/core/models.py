@@ -270,3 +270,73 @@ class ItemPedidoWeb(models.Model):
     quantidade = models.DecimalField(max_digits=14, decimal_places=3)
     preco_unitario = models.DecimalField(max_digits=12, decimal_places=2)
     total = models.DecimalField(max_digits=12, decimal_places=2)
+
+
+class Fornecedor(models.Model):
+    """Fornecedor cadastrado dentro do tenant da empresa."""
+    empresa = models.ForeignKey(Empresa, on_delete=models.CASCADE, related_name="fornecedores")
+    nome = models.CharField(max_length=180)
+    cnpj = models.CharField(max_length=14, blank=True)
+    email = models.EmailField(blank=True)
+    telefone = models.CharField(max_length=30, blank=True)
+    ativo = models.BooleanField(default=True)
+    criado_em = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("nome",)
+        constraints = [
+            models.UniqueConstraint(fields=("empresa", "cnpj"), name="uniq_cnpj_fornecedor_empresa"),
+        ]
+
+    def __str__(self):
+        return self.nome
+
+
+class CompraEntrada(models.Model):
+    """Nota de compra importada como rascunho; estoque só muda ao confirmar recebimento."""
+    class Estado(models.TextChoices):
+        RASCUNHO = "RASCUNHO", "Aguardando conferência"
+        RECEBIDA = "RECEBIDA", "Recebida"
+        CANCELADA = "CANCELADA", "Cancelada"
+
+    empresa = models.ForeignKey(Empresa, on_delete=models.CASCADE, related_name="compras_entrada")
+    fornecedor = models.ForeignKey(Fornecedor, on_delete=models.PROTECT, related_name="compras")
+    numero_nf = models.CharField(max_length=20)
+    serie = models.CharField(max_length=10, blank=True)
+    chave_acesso = models.CharField(max_length=44, blank=True)
+    emitente_cnpj = models.CharField(max_length=14, blank=True)
+    data_emissao = models.DateField(null=True, blank=True)
+    valor_total = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    estado = models.CharField(max_length=12, choices=Estado.choices, default=Estado.RASCUNHO, db_index=True)
+    criado_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="compras_importadas")
+    recebido_por = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="compras_recebidas")
+    criado_em = models.DateTimeField(auto_now_add=True)
+    recebido_em = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("-criado_em",)
+        constraints = [
+            models.UniqueConstraint(
+                fields=("empresa", "emitente_cnpj", "serie", "numero_nf"),
+                name="uniq_nf_entrada_empresa_emitente",
+            ),
+            models.UniqueConstraint(
+                fields=("empresa", "chave_acesso"),
+                condition=~models.Q(chave_acesso=""),
+                name="uniq_chave_nf_entrada_empresa",
+            ),
+        ]
+
+    def __str__(self):
+        return f"NF {self.numero_nf} — {self.fornecedor.nome}"
+
+
+class ItemCompraEntrada(models.Model):
+    compra = models.ForeignKey(CompraEntrada, on_delete=models.CASCADE, related_name="itens")
+    produto = models.ForeignKey(Produto, null=True, blank=True, on_delete=models.PROTECT, related_name="itens_compra")
+    codigo_xml = models.CharField(max_length=60, blank=True)
+    descricao_xml = models.CharField(max_length=240)
+    unidade_xml = models.CharField(max_length=20, blank=True)
+    quantidade = models.DecimalField(max_digits=14, decimal_places=3)
+    custo_unitario = models.DecimalField(max_digits=14, decimal_places=4)
+    total = models.DecimalField(max_digits=14, decimal_places=2)
