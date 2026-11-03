@@ -58,6 +58,10 @@ class ArmazemAPI:
         response = self._request("GET", "/api/v1/produtos/")
         return response.json()
 
+    def resumo_empresa(self):
+        response = self._request("GET", "/api/v1/empresa/resumo/")
+        return response.json()
+
     def abrir_caixa(self, dispositivo_id, saldo_abertura=0):
         response = self._request(
             "POST", "/api/v1/caixas/abrir/",
