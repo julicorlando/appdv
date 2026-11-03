@@ -211,19 +211,26 @@ def confirmar_recebimento(*, compra_id, empresa, usuario, mapeamentos=None):
                 "itens": f"O produto {produto.codigo} está em inventário aberto. Conclua a contagem antes de receber a NF."
             })
 
+        fator = produto.fator_conversao
+        if fator <= 0:
+            raise ValidationError({"itens": f"Fator de conversão inválido para {produto.nome}."})
+        quantidade_estoque = (item.quantidade * fator).quantize(Decimal("0.001"))
+        custo_unidade_estoque = (item.custo_unitario / fator).quantize(Decimal("0.0001"))
+        item.fator_conversao = fator
+        item.save(update_fields=("fator_conversao",))
         saldo_anterior = produto.estoque_atual
-        saldo_novo = saldo_anterior + item.quantidade
+        saldo_novo = saldo_anterior + quantidade_estoque
         custo_anterior = produto.custo_medio or Decimal("0")
         if saldo_novo > 0:
             produto.custo_medio = (
-                (saldo_anterior * custo_anterior + item.quantidade * item.custo_unitario)
+                (saldo_anterior * custo_anterior + quantidade_estoque * custo_unidade_estoque)
                 / saldo_novo
             ).quantize(Decimal("0.01"))
         produto.estoque_atual = saldo_novo
         produto.save(update_fields=("estoque_atual", "custo_medio", "atualizado_em"))
         MovimentacaoEstoque.objects.create(
             empresa=empresa, produto=produto,
-            tipo=MovimentacaoEstoque.Tipo.ENTRADA, quantidade=item.quantidade,
+            tipo=MovimentacaoEstoque.Tipo.ENTRADA, quantidade=quantidade_estoque,
             referencia=f"Recebimento NF {compra.numero_nf}/{compra.serie}"[:120],
             operador=usuario,
         )
