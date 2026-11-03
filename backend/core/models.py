@@ -337,6 +337,7 @@ class CompraEntrada(models.Model):
     chave_acesso = models.CharField(max_length=44, blank=True)
     emitente_cnpj = models.CharField(max_length=14, blank=True)
     data_emissao = models.DateField(null=True, blank=True)
+    vencimento = models.DateField(null=True, blank=True, db_index=True)
     valor_total = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     estado = models.CharField(max_length=12, choices=Estado.choices, default=Estado.RASCUNHO, db_index=True)
     criado_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="compras_importadas")
