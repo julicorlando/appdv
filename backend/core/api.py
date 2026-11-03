@@ -542,7 +542,10 @@ class PedidosWebView(TenantAPIView):
                 raise ValidationError({"itens": "Produto indisponível nesta empresa."})
             except (KeyError, ValueError, TypeError, InvalidOperation):
                 raise ValidationError({"itens": "Produto ou quantidade inválidos."})
-            produtos[produto.pk] = produtos.get(produto.pk, Decimal("0")) + quantidade
+            fator = Decimal(str(produto.fator_conversao))
+            if not fator.is_finite() or fator <= 0:
+                raise ValidationError({"itens": "Fator de conversão inválido no catálogo."})
+            produtos[produto.pk] = produtos.get(produto.pk, Decimal("0")) + (quantidade * fator)
             linha_total = (produto.preco_venda * quantidade).quantize(Decimal("0.01"))
             calculados.append((produto, quantidade, linha_total))
             subtotal += linha_total
