@@ -6,9 +6,11 @@ Sistema multi-tenant para gestão de materiais de construção: backend Django/D
 
 - **Painel Master** em `/master/`: cadastro e suspensão de empresas, primeiro administrador por empresa e criação/vinculação de usuários e perfis.
 - **Painel da empresa**: catálogo, setores e endereços, estoque, vendas e movimentações, autorizações temporárias e inventário preventivo.
-- **Auditoria de estoque**: consulte entradas, vendas, devoluções e ajustes por produto, referência, empresa e operador.\n- **Importação Excel**: baixe o modelo na tela de produtos. A planilha atualiza produtos pelo código e o `estoque_atual` substitui o saldo do cadastro. Cada diferença fica no histórico. Arquivos .xlsx até 5 MB e 5.000 linhas.
+- **Auditoria de estoque**: consulte entradas, vendas, devoluções e ajustes por produto, referência, empresa e operador.
+- **Importação Excel**: baixe o modelo na tela de produtos. A planilha atualiza produtos pelo código e o `estoque_atual` substitui o saldo do cadastro. Cada diferença fica no histórico. Arquivos .xlsx até 5 MB e 5.000 linhas.
 - **Inventário preventivo**: sorteia dias úteis e setores entre os próximos 30 dias; no dia sorteado, escolhe produtos aleatórios do setor. Durante a contagem física, as vendas dos produtos daquela amostra são pausadas. A reconciliação registra ajustes auditáveis.
-- **Clientes e crédito**: cadastro por empresa, limite de crédito, vendas parcialmente pagas e contas a receber com baixas parciais no painel e API. Crédito exige conexão e confirmação do saldo no servidor.\n- **PDV desktop**: login via API, seleção de empresa, busca por código/código de barras, abertura e fechamento de caixa, venda com estoque no servidor, cancelamento com token de gerente, cupom interno em TXT e fila local idempotente para falhas de conexão.
+- **Clientes e crédito**: cadastro por empresa, limite de crédito, vendas parcialmente pagas e contas a receber com baixas parciais no painel e API. Crédito exige conexão e confirmação do saldo no servidor.
+- **PDV desktop**: login via API, seleção de empresa, busca por código/código de barras, abertura e fechamento de caixa, venda com estoque no servidor, cancelamento com token de gerente, cupom interno em TXT e fila local idempotente para falhas de conexão.
 - **Cupom interno**: vendas são registradas no servidor; emissão fiscal NF-e/NFC-e depende da configuração de provedor e certificado, ainda não habilitada neste scaffold.
 
 ## Isolamento por empresa
@@ -60,7 +62,8 @@ As operações protegidas exigem conexão com o servidor. Vendas que falham por 
 - `GET /api/v1/minhas-empresas/`
 - `GET /api/v1/produtos/` e `GET /api/v1/categorias/`
 - `POST /api/v1/caixas/abrir/`, `POST /api/v1/caixas/{id}/fechar/`, `GET /api/v1/caixas/{id}/resumo/`, `POST /api/v1/caixas/movimentacoes/`
-- `GET/POST /api/v1/clientes/` e `GET/POST /api/v1/contas-receber/`\n- `POST /api/v1/vendas/`
+- `GET/POST /api/v1/clientes/` e `GET/POST /api/v1/contas-receber/`
+- `POST /api/v1/vendas/`
 - `POST /api/v1/autorizacoes/`
 - `POST /api/v1/pedidos-web/` e `GET /api/v1/pedidos-web/`
 - `POST /api/v1/pedidos-web/{id}/finalizar/`
