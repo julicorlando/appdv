@@ -103,10 +103,15 @@ class ArmazemAPI:
         return response.json()
 
 
-    def criar_pedido_web(self, cliente_nome, cliente_telefone, itens):
+    def criar_pedido_web(self, cliente_nome, cliente_telefone, itens, endereco_entrega="", entrega_solicitada_em=""):
         response = self._request(
             "POST", "/api/v1/pedidos-web/",
-            json={"cliente_nome": cliente_nome, "cliente_telefone": cliente_telefone, "itens": itens},
+            json={
+                "cliente_nome": cliente_nome, "cliente_telefone": cliente_telefone,
+                "endereco_entrega": endereco_entrega,
+                "entrega_solicitada_em": entrega_solicitada_em,
+                "itens": itens,
+            },
         )
         return response.json()
 
