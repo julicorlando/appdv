@@ -35,7 +35,7 @@ class LoginDialog(QDialog):
         self.setWindowIcon(QIcon(asset_path("appdv-icon-256.png")))
         self.api = None
         layout = QFormLayout(self)
-        self.url = QLineEdit(os.getenv("APPDV_API_URL", "http://127.0.0.1:8000"))
+        self.url = QLineEdit(os.getenv("APPDV_API_URL", "https://appdv.axionwebdigital.com.br"))
         self.username = QLineEdit()
         self.password = QLineEdit()
         self.password.setEchoMode(QLineEdit.EchoMode.Password)
