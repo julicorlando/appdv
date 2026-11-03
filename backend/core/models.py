@@ -375,6 +375,41 @@ class ItemCompraEntrada(models.Model):
 
 
 
+class ContaPagar(models.Model):
+    class Estado(models.TextChoices):
+        ABERTA = "ABERTA", "Em aberto"
+        PARCIAL = "PARCIAL", "Parcialmente paga"
+        QUITADA = "QUITADA", "Quitada"
+        CANCELADA = "CANCELADA", "Cancelada"
+
+    empresa = models.ForeignKey(Empresa, on_delete=models.CASCADE, related_name="contas_pagar")
+    fornecedor = models.ForeignKey(Fornecedor, on_delete=models.PROTECT, related_name="contas_pagar")
+    compra = models.OneToOneField(CompraEntrada, null=True, blank=True, on_delete=models.PROTECT, related_name="conta_pagar")
+    descricao = models.CharField(max_length=240)
+    valor_original = models.DecimalField(max_digits=14, decimal_places=2)
+    saldo = models.DecimalField(max_digits=14, decimal_places=2)
+    vencimento = models.DateField(db_index=True)
+    estado = models.CharField(max_length=12, choices=Estado.choices, default=Estado.ABERTA, db_index=True)
+    criado_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="contas_pagar_criadas")
+    criado_em = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("vencimento", "criado_em")
+
+
+class PagamentoContaPagar(models.Model):
+    conta = models.ForeignKey(ContaPagar, on_delete=models.PROTECT, related_name="pagamentos")
+    empresa = models.ForeignKey(Empresa, on_delete=models.CASCADE, related_name="pagamentos_contas_pagar")
+    operador = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    meio = models.CharField(max_length=10, choices=Transacao.Meio.choices)
+    valor = models.DecimalField(max_digits=14, decimal_places=2)
+    referencia = models.CharField(max_length=120, blank=True)
+    pago_em = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-pago_em",)
+
+
 class MovimentacaoCaixa(models.Model):
     class Tipo(models.TextChoices):
         SANGRIA = "SANGRIA", "Sangria"
