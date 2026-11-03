@@ -80,8 +80,10 @@ def registrar_venda(*, empresa, usuario, dados):
                     "itens": f"{produto.nome} está em contagem física. Aguarde a conclusão do inventário."
                 })
             quantidade = Decimal(str(linha["quantidade"]))
-            if not quantidade.is_finite() or quantidade <= 0:
+            fator = Decimal(str(produto.fator_conversao))
+            if not quantidade.is_finite() or quantidade <= 0 or not fator.is_finite() or fator <= 0:
                 raise ValueError
+            quantidade_estoque = (quantidade * fator).quantize(Decimal("0.001"))
             desconto = Decimal(str(linha.get("desconto", "0")))
             bruto = (produto.preco_venda * quantidade).quantize(Decimal("0.01"))
             if not desconto.is_finite() or desconto < 0 or desconto > bruto:
@@ -98,10 +100,10 @@ def registrar_venda(*, empresa, usuario, dados):
         produtos_travados[produto.pk] = produto
         estoque_solicitado[produto.pk] = estoque_solicitado.get(
             produto.pk, Decimal("0")
-        ) + quantidade
+        ) + quantidade_estoque
         total_linha = bruto - desconto
         subtotal += bruto
-        itens_calculados.append((produto, quantidade, desconto, total_linha))
+        itens_calculados.append((produto, quantidade, desconto, total_linha, fator))
 
     for produto_id, quantidade_total in estoque_solicitado.items():
         produto = produtos_travados[produto_id]
@@ -161,10 +163,10 @@ def registrar_venda(*, empresa, usuario, dados):
         cliente=cliente, estado=Venda.Estado.CONCLUIDA, subtotal=subtotal, desconto=desconto_total,
         total=total, observacao=str(dados.get("observacao", ""))[:2000],
     )
-    for produto, quantidade, desconto, total_linha in itens_calculados:
+    for produto, quantidade, desconto, total_linha, fator in itens_calculados:
         ItemVenda.objects.create(
             empresa=empresa, venda=venda, produto=produto, quantidade=quantidade,
-            preco_unitario=produto.preco_venda, desconto=desconto, total=total_linha,
+            preco_unitario=produto.preco_venda, desconto=desconto, fator_conversao=fator, total=total_linha,
         )
     for produto_id, quantidade_total in estoque_solicitado.items():
         produto = produtos_travados[produto_id]
@@ -220,12 +222,12 @@ def cancelar_venda(*, empresa, usuario, venda_id, codigo,
         venda.save(update_fields=("estado",))
     itens = venda.itens.select_related("produto").select_for_update()
     for item in itens:
-        item.produto.estoque_atual += item.quantidade
+        item.produto.estoque_atual += (item.quantidade * item.fator_conversao).quantize(Decimal("0.001"))
         item.produto.save(update_fields=("estoque_atual", "atualizado_em"))
         MovimentacaoEstoque.objects.create(
             empresa=empresa, produto=item.produto,
             tipo=MovimentacaoEstoque.Tipo.DEVOLUCAO,
-            quantidade=item.quantidade, referencia=f"Estorno da venda #{venda.pk}",
+            quantidade=(item.quantidade * item.fator_conversao).quantize(Decimal("0.001")), referencia=f"Estorno da venda #{venda.pk}",
             operador=usuario,
         )
     for pagamento in venda.transacoes.filter(tipo=Transacao.Tipo.PAGAMENTO):
