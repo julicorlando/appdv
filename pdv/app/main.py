@@ -598,7 +598,7 @@ class PDVWindow(QMainWindow):
         self.detail_line_total.setText(f"Preço total: R$ {line_total:.2f}" if quantity else "Preço total: —")
         stock_unit = product.get("unidade_estoque") or product.get("unidade", "")
         factor = Decimal(str(product.get("fator_conversao", "1")))
-        conversion = f" · 1 {product.get('unidade', '')} = {factor:g} {stock_unit}" if factor != 1 or stock_unit != product.get("unidade", "") else ""
+        conversion = f" · 1 {product.get('unidade', '')} = {factor.normalize():g} {stock_unit}" if factor != 1 or stock_unit != product.get("unidade", "") else ""
         self.detail_stock.setText(
             f"Saldo disponível: {product.get('estoque_atual', 0)} {stock_unit}{conversion}  ·  "
             f"{product.get('setor', 'Sem setor')} / {product.get('endereco', 'Sem endereço')}"
