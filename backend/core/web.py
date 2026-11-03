@@ -16,7 +16,7 @@ from django.utils.text import slugify
 from .forms import CategoriaSimpleForm, EmpresaForm, EmpresaLogoForm, MembroForm, ProdutoForm
 from .inventory import concluir_contagem, gerar_contagens_aleatorias, importar_planilha, iniciar_contagem
 from .purchases import confirmar_recebimento, criar_compra_manual, importar_nfe
-from .models import Cliente, ContaReceber, RecebimentoConta, Categoria, CompraEntrada, Empresa, InventarioContagem, ItemContagem, MembroEmpresa, MovimentacaoEstoque, PedidoWeb, Produto, TokenAutorizacao, Venda
+from .models import Cliente, ContaPagar, PagamentoContaPagar, ContaReceber, RecebimentoConta, Categoria, CompraEntrada, Empresa, InventarioContagem, ItemContagem, MembroEmpresa, MovimentacaoEstoque, PedidoWeb, Produto, TokenAutorizacao, Venda
 
 User = get_user_model()
 
@@ -658,5 +658,39 @@ def empresa_contas_receber(request, empresa_id):
         empresa=membro.empresa, estado__in=(ContaReceber.Estado.ABERTA, ContaReceber.Estado.PARCIAL)
     ).select_related("cliente", "venda").order_by("vencimento")
     return render(request, "empresa_contas_receber.html", {
+        "empresa": membro.empresa, "membro": membro, "contas": contas,
+    })
+
+@login_required
+def empresa_contas_pagar(request, empresa_id):
+    membro = require_membership(
+        request, empresa_id, (MembroEmpresa.Papel.ADMIN, MembroEmpresa.Papel.GERENTE)
+    )
+    if request.method == "POST":
+        try:
+            with transaction.atomic():
+                conta = ContaPagar.objects.select_for_update().get(
+                    pk=request.POST.get("conta"), empresa=membro.empresa,
+                    estado__in=(ContaPagar.Estado.ABERTA, ContaPagar.Estado.PARCIAL),
+                )
+                valor = Decimal(request.POST.get("valor", "0"))
+                meio = request.POST.get("meio")
+                if not valor.is_finite() or valor <= 0 or valor > conta.saldo or meio not in ("DINHEIRO", "PIX", "CARTAO", "OUTRO"):
+                    raise ValueError("Valor ou forma de pagamento inválidos.")
+                PagamentoContaPagar.objects.create(
+                    conta=conta, empresa=membro.empresa, operador=request.user,
+                    meio=meio, valor=valor,
+                )
+                conta.saldo -= valor
+                conta.estado = ContaPagar.Estado.QUITADA if conta.saldo == 0 else ContaPagar.Estado.PARCIAL
+                conta.save(update_fields=("saldo", "estado"))
+            messages.success(request, "Pagamento ao fornecedor registrado.")
+        except Exception as exc:
+            messages.error(request, f"Não foi possível registrar o pagamento: {exc}")
+        return redirect("empresa-contas-pagar", empresa_id=empresa_id)
+    contas = ContaPagar.objects.filter(
+        empresa=membro.empresa, estado__in=(ContaPagar.Estado.ABERTA, ContaPagar.Estado.PARCIAL)
+    ).select_related("fornecedor", "compra").order_by("vencimento")
+    return render(request, "empresa_contas_pagar.html", {
         "empresa": membro.empresa, "membro": membro, "contas": contas,
     })
