@@ -15,7 +15,7 @@ from django.utils import timezone
 from django.utils.text import slugify
 from .forms import CategoriaSimpleForm, EmpresaForm, EmpresaLogoForm, MembroForm, ProdutoForm
 from .inventory import concluir_contagem, gerar_contagens_aleatorias, importar_planilha, iniciar_contagem
-from .purchases import confirmar_recebimento, importar_nfe
+from .purchases import confirmar_recebimento, criar_compra_manual, importar_nfe
 from .models import Categoria, CompraEntrada, Empresa, InventarioContagem, ItemContagem, MembroEmpresa, MovimentacaoEstoque, PedidoWeb, Produto, TokenAutorizacao, Venda
 
 User = get_user_model()
@@ -541,7 +541,16 @@ def empresa_compras(request, empresa_id):
     if request.method == "POST":
         acao = request.POST.get("acao")
         try:
-            if acao == "importar_xml":
+            if acao == "manual":
+                compra = criar_compra_manual(
+                    empresa=membro.empresa, usuario=request.user, dados=request.POST
+                )
+                messages.success(
+                    request,
+                    f"NF {compra.numero_nf}/{compra.serie} salva como rascunho manual. "
+                    "Confira os itens antes de receber.",
+                )
+            elif acao == "importar_xml":
                 arquivo = request.FILES.get("arquivo_xml")
                 if not arquivo:
                     raise ValueError("Selecione o arquivo XML da NF-e.")
