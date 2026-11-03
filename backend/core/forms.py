@@ -1,3 +1,4 @@
+from decimal import Decimal
 from django import forms
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
@@ -47,19 +48,27 @@ class CategoriaForm(forms.ModelForm):
 
 
 class ProdutoForm(forms.ModelForm):
+    fator_conversao = forms.DecimalField(
+        min_value=Decimal("0.000001"), max_digits=12, decimal_places=6,
+        help_text="Quantas unidades de estoque são consumidas por unidade vendida.",
+    )
     class Meta:
         model = Produto
-        fields = ("categoria", "codigo", "codigo_barras", "nome", "unidade", "setor", "endereco",
+        fields = ("categoria", "codigo", "codigo_barras", "nome", "unidade",
+                  "unidade_estoque", "fator_conversao", "setor", "endereco",
                   "preco_venda", "custo_medio", "estoque_minimo")
         widgets = {
             "preco_venda": forms.NumberInput(attrs={"step": "0.01"}),
             "custo_medio": forms.NumberInput(attrs={"step": "0.01"}),
             "estoque_minimo": forms.NumberInput(attrs={"step": "0.001"}),
+            "fator_conversao": forms.NumberInput(attrs={"step": "0.000001", "min": "0.000001"}),
         }
     def __init__(self, *args, empresa, **kwargs):
         super().__init__(*args, **kwargs)
         self.empresa = empresa
         self.fields["categoria"].queryset = Categoria.objects.filter(empresa=empresa, ativa=True)
+        self.fields["unidade_estoque"].label = "Unidade de estoque (base)"
+        self.fields["unidade_estoque"].help_text = "Deixe em branco se for igual à unidade de venda."
         self.fields["setor"].required = True
         self.fields["endereco"].required = True
 
