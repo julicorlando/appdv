@@ -16,7 +16,7 @@ from django.utils.text import slugify
 from .forms import CategoriaSimpleForm, EmpresaForm, EmpresaLogoForm, MembroForm, ProdutoForm
 from .inventory import concluir_contagem, gerar_contagens_aleatorias, importar_planilha, iniciar_contagem
 from .purchases import confirmar_recebimento, criar_compra_manual, importar_nfe
-from .models import Categoria, CompraEntrada, Empresa, InventarioContagem, ItemContagem, MembroEmpresa, MovimentacaoEstoque, PedidoWeb, Produto, TokenAutorizacao, Venda
+from .models import Cliente, ContaReceber, RecebimentoConta, Categoria, CompraEntrada, Empresa, InventarioContagem, ItemContagem, MembroEmpresa, MovimentacaoEstoque, PedidoWeb, Produto, TokenAutorizacao, Venda
 
 User = get_user_model()
 
@@ -597,4 +597,66 @@ def empresa_compras(request, empresa_id):
     return render(request, "empresa_compras.html", {
         "empresa": membro.empresa, "membro": membro,
         "compras": compras, "produtos": produtos,
+    })
+
+@login_required
+def empresa_clientes(request, empresa_id):
+    membro = require_membership(
+        request, empresa_id, (MembroEmpresa.Papel.ADMIN, MembroEmpresa.Papel.GERENTE)
+    )
+    if request.method == "POST":
+        nome = request.POST.get("nome", "").strip()
+        try:
+            limite = Decimal(request.POST.get("limite_credito", "0"))
+            if not nome or not limite.is_finite() or limite < 0:
+                raise ValueError
+            documento = "".join(ch for ch in request.POST.get("documento", "") if ch.isdigit())[:14]
+            cliente = Cliente.objects.create(
+                empresa=membro.empresa, nome=nome[:180], documento=documento,
+                telefone=request.POST.get("telefone", "")[:30],
+                email=request.POST.get("email", "")[:254],
+                limite_credito=limite,
+            )
+            messages.success(request, f"Cliente {cliente.nome} cadastrado.")
+        except Exception as exc:
+            messages.error(request, f"Não foi possível cadastrar o cliente: {exc}")
+        return redirect("empresa-clientes", empresa_id=empresa_id)
+    clientes = Cliente.objects.filter(empresa=membro.empresa).order_by("nome")
+    return render(request, "empresa_clientes.html", {
+        "empresa": membro.empresa, "membro": membro, "clientes": clientes,
+    })
+
+
+@login_required
+def empresa_contas_receber(request, empresa_id):
+    membro = require_membership(
+        request, empresa_id, (MembroEmpresa.Papel.ADMIN, MembroEmpresa.Papel.GERENTE)
+    )
+    if request.method == "POST":
+        try:
+            with transaction.atomic():
+                conta = ContaReceber.objects.select_for_update().get(
+                    pk=request.POST.get("conta"), empresa=membro.empresa,
+                    estado__in=(ContaReceber.Estado.ABERTA, ContaReceber.Estado.PARCIAL),
+                )
+                valor = Decimal(request.POST.get("valor", "0"))
+                meio = request.POST.get("meio")
+                if not valor.is_finite() or valor <= 0 or valor > conta.saldo or meio not in ("DINHEIRO", "PIX", "CARTAO", "OUTRO"):
+                    raise ValueError("Valor ou forma de pagamento inválidos.")
+                RecebimentoConta.objects.create(
+                    conta=conta, empresa=membro.empresa, operador=request.user,
+                    meio=meio, valor=valor,
+                )
+                conta.saldo -= valor
+                conta.estado = ContaReceber.Estado.QUITADA if conta.saldo == 0 else ContaReceber.Estado.PARCIAL
+                conta.save(update_fields=("saldo", "estado"))
+            messages.success(request, "Recebimento registrado.")
+        except Exception as exc:
+            messages.error(request, f"Não foi possível registrar: {exc}")
+        return redirect("empresa-contas-receber", empresa_id=empresa_id)
+    contas = ContaReceber.objects.filter(
+        empresa=membro.empresa, estado__in=(ContaReceber.Estado.ABERTA, ContaReceber.Estado.PARCIAL)
+    ).select_related("cliente", "venda").order_by("vencimento")
+    return render(request, "empresa_contas_receber.html", {
+        "empresa": membro.empresa, "membro": membro, "contas": contas,
     })
