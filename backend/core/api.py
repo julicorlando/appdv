@@ -249,6 +249,48 @@ class ContasReceberView(TenantAPIView):
         return Response({"id": conta.pk, "saldo": str(conta.saldo), "estado": conta.estado})
 
 
+class ContasPagarView(TenantAPIView):
+    def get(self, request):
+        empresa, membro = self.get_empresa(request)
+        if membro.papel not in (MembroEmpresa.Papel.ADMIN, MembroEmpresa.Papel.GERENTE):
+            raise PermissionDenied("A área financeira exige perfil de gerente ou administrador.")
+        from .models import ContaPagar
+        contas = ContaPagar.objects.filter(
+            empresa=empresa, estado__in=(ContaPagar.Estado.ABERTA, ContaPagar.Estado.PARCIAL)
+        ).select_related("fornecedor").order_by("vencimento")[:500]
+        return Response([{
+            "id": c.pk, "fornecedor": c.fornecedor.nome, "descricao": c.descricao,
+            "valor_original": str(c.valor_original), "saldo": str(c.saldo),
+            "vencimento": c.vencimento.isoformat(), "estado": c.estado,
+        } for c in contas])
+
+    @transaction.atomic
+    def post(self, request):
+        empresa, membro = self.get_empresa(request)
+        if membro.papel not in (MembroEmpresa.Papel.ADMIN, MembroEmpresa.Papel.GERENTE):
+            raise PermissionDenied("Somente gerente ou administrador pode registrar pagamentos.")
+        from .models import ContaPagar, PagamentoContaPagar
+        try:
+            conta = ContaPagar.objects.select_for_update().get(
+                pk=request.data.get("conta"), empresa=empresa,
+                estado__in=(ContaPagar.Estado.ABERTA, ContaPagar.Estado.PARCIAL),
+            )
+            valor = Decimal(str(request.data.get("valor")))
+            meio = str(request.data.get("meio"))
+            if not valor.is_finite() or valor <= 0 or valor > conta.saldo or meio not in Transacao.Meio.values:
+                raise ValueError
+        except (ContaPagar.DoesNotExist, ValueError, TypeError, InvalidOperation):
+            raise ValidationError({"pagamento": "Conta, valor ou forma de pagamento inválidos."})
+        PagamentoContaPagar.objects.create(
+            conta=conta, empresa=empresa, operador=request.user,
+            meio=meio, valor=valor, referencia=str(request.data.get("referencia", ""))[:120],
+        )
+        conta.saldo -= valor
+        conta.estado = ContaPagar.Estado.QUITADA if conta.saldo == 0 else ContaPagar.Estado.PARCIAL
+        conta.save(update_fields=("saldo", "estado"))
+        return Response({"id": conta.pk, "saldo": str(conta.saldo), "estado": conta.estado})
+
+
 class AbrirCaixaView(TenantAPIView):
     def post(self, request):
         from .models import Caixa
