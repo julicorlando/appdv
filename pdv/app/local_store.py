@@ -19,6 +19,11 @@ class LocalStore:
                 payload TEXT NOT NULL, updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (tenant_id, product_id)
             )""")
+            db.execute("""CREATE TABLE IF NOT EXISTS held_sales (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id TEXT NOT NULL,
+                label TEXT NOT NULL, payload TEXT NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )""")
             db.execute("""CREATE TABLE IF NOT EXISTS pending_sales (
                 idempotency_key TEXT PRIMARY KEY, tenant_id TEXT NOT NULL,
                 payload TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -74,3 +79,26 @@ class LocalStore:
         path = folder / f"cupom-{sale_id}.html"
         path.write_text(text, encoding="utf-8")
         return path
+
+
+    def hold_sale(self, tenant_id, label, payload):
+        with self.connect() as db:
+            cursor = db.execute(
+                "INSERT INTO held_sales (tenant_id, label, payload) VALUES (?, ?, ?)",
+                (str(tenant_id), str(label)[:100], json.dumps(payload, ensure_ascii=False)),
+            )
+            return cursor.lastrowid
+
+    def held_sales(self, tenant_id):
+        with self.connect() as db:
+            return db.execute(
+                "SELECT id, label, payload, created_at FROM held_sales WHERE tenant_id=? ORDER BY created_at",
+                (str(tenant_id),),
+            ).fetchall()
+
+    def remove_held_sale(self, sale_id, tenant_id):
+        with self.connect() as db:
+            db.execute(
+                "DELETE FROM held_sales WHERE id=? AND tenant_id=?",
+                (int(sale_id), str(tenant_id)),
+            )
