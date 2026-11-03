@@ -127,6 +127,12 @@ class PDVWindow(QMainWindow):
         self.edit_cart_item.clicked.connect(self._edit_cart_item)
         self.remove_cart_item = QPushButton("Remover item")
         self.remove_cart_item.clicked.connect(self._remove_cart_item)
+        self.hold_cart = QPushButton("Suspender venda")
+        self.hold_cart.clicked.connect(self._suspend_sale)
+        self.resume_cart = QPushButton("Retomar venda")
+        self.resume_cart.clicked.connect(self._resume_sale)
+        cart_actions.addWidget(self.hold_cart)
+        cart_actions.addWidget(self.resume_cart)
         cart_actions.addWidget(self.edit_cart_item)
         cart_actions.addWidget(self.remove_cart_item)
         cart_actions.addStretch(1)
@@ -264,6 +270,70 @@ class PDVWindow(QMainWindow):
             )
             return
         self.cart[product_id] = {"produto": product, "quantidade": quantity}
+        self._render_cart()
+
+    def _suspend_sale(self):
+        if not self.cart or not self.tenant_id:
+            QMessageBox.information(self, "Suspender venda", "O carrinho está vazio.")
+            return
+        label, accepted = QInputDialog.getText(
+            self, "Suspender venda", "Identificação para localizar depois:",
+            text=f"Venda {datetime.now().strftime('%H:%M')}",
+        )
+        if not accepted:
+            return
+        payload = {
+            "items": [
+                {"produto": product_id, "quantidade": str(item["quantidade"])}
+                for product_id, item in self.cart.items()
+            ]
+        }
+        self.store.hold_sale(self.tenant_id, label.strip() or "Venda suspensa", payload)
+        self.cart.clear()
+        self._render_cart()
+        QMessageBox.information(self, "Venda suspensa", "O carrinho foi salvo neste computador.")
+
+    def _resume_sale(self):
+        if not self.tenant_id:
+            return
+        held = self.store.held_sales(self.tenant_id)
+        if not held:
+            QMessageBox.information(self, "Retomar venda", "Não há vendas suspensas neste computador.")
+            return
+        choices = [f"{row[1]} · {row[3]}" for row in held]
+        selected, accepted = QInputDialog.getItem(
+            self, "Retomar venda", "Selecione um carrinho suspenso:", choices, 0, False
+        )
+        if not accepted:
+            return
+        sale_id, _label, raw_payload, _created = held[choices.index(selected)]
+        payload = json.loads(raw_payload)
+        product_map = {int(product["id"]): product for product in self.products}
+        restored = {}
+        for line in payload.get("items", []):
+            product_id = int(line["produto"])
+            product = product_map.get(product_id)
+            if not product:
+                QMessageBox.warning(
+                    self, "Produto indisponível",
+                    f"O produto {product_id} não está no catálogo em cache. Atualize o catálogo.",
+                )
+                return
+            restored[product_id] = {
+                "produto": product, "quantidade": Decimal(str(line["quantidade"]))
+            }
+        if self.cart:
+            decision = QMessageBox.question(
+                self, "Carrinho em uso",
+                "Deseja suspender o carrinho atual antes de retomar o selecionado?",
+            )
+            if decision != QMessageBox.StandardButton.Yes:
+                return
+            self._suspend_sale()
+            if self.cart:
+                return
+        self.cart = restored
+        self.store.remove_held_sale(sale_id, self.tenant_id)
         self._render_cart()
 
     def _edit_cart_item(self):
