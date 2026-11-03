@@ -62,6 +62,8 @@ class Produto(models.Model):
     endereco = models.CharField(max_length=100, blank=True, db_index=True)
     nome = models.CharField(max_length=200)
     unidade = models.CharField(max_length=12, default="UN")
+    unidade_estoque = models.CharField(max_length=12, blank=True, default="")
+    fator_conversao = models.DecimalField(max_digits=12, decimal_places=6, default=1)
     preco_venda = models.DecimalField(max_digits=12, decimal_places=2)
     custo_medio = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     estoque_atual = models.DecimalField(max_digits=14, decimal_places=3, default=0)
@@ -374,6 +376,7 @@ class ItemCompraEntrada(models.Model):
     unidade_xml = models.CharField(max_length=20, blank=True)
     quantidade = models.DecimalField(max_digits=14, decimal_places=3)
     custo_unitario = models.DecimalField(max_digits=14, decimal_places=4)
+    fator_conversao = models.DecimalField(max_digits=12, decimal_places=6, default=1)
     total = models.DecimalField(max_digits=14, decimal_places=2)
 
 
