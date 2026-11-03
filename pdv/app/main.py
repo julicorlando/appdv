@@ -374,7 +374,7 @@ class PDVWindow(QMainWindow):
                 product.get("codigo", ""), product.get("nome", ""),
                 product.get("setor", ""), product.get("endereco", ""),
                 f"R$ {Decimal(str(product.get('preco_venda', 0))):.2f}",
-                str(product.get("estoque_atual", "0")),
+                f"{product.get('estoque_atual', '0')} {product.get('unidade_estoque') or product.get('unidade', '')}",
             ]
             for col, value in enumerate(values):
                 self.catalog.setItem(row, col, QTableWidgetItem(str(value)))
@@ -596,8 +596,11 @@ class PDVWindow(QMainWindow):
         self.detail_quantity.setText(f"Quantidade no carrinho: {quantity if quantity else '—'} {product.get('unidade', '')}")
         self.detail_price.setText(f"Preço unitário: R$ {price:.2f}")
         self.detail_line_total.setText(f"Preço total: R$ {line_total:.2f}" if quantity else "Preço total: —")
+        stock_unit = product.get("unidade_estoque") or product.get("unidade", "")
+        factor = Decimal(str(product.get("fator_conversao", "1")))
+        conversion = f" · 1 {product.get('unidade', '')} = {factor:g} {stock_unit}" if factor != 1 or stock_unit != product.get("unidade", "") else ""
         self.detail_stock.setText(
-            f"Saldo disponível: {product.get('estoque_atual', 0)} {product.get('unidade', '')}  ·  "
+            f"Saldo disponível: {product.get('estoque_atual', 0)} {stock_unit}{conversion}  ·  "
             f"{product.get('setor', 'Sem setor')} / {product.get('endereco', 'Sem endereço')}"
         )
 
