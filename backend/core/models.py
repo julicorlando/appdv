@@ -320,6 +320,7 @@ class CompraEntrada(models.Model):
         constraints = [
             models.UniqueConstraint(
                 fields=("empresa", "emitente_cnpj", "serie", "numero_nf"),
+                condition=~models.Q(emitente_cnpj=""),
                 name="uniq_nf_entrada_empresa_emitente",
             ),
             models.UniqueConstraint(
