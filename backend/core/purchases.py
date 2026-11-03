@@ -1,5 +1,5 @@
 """Importação e recebimento seguro de XML de NF-e de entrada."""
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from xml.etree import ElementTree
 
@@ -8,7 +8,7 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from .models import (
-    CompraEntrada, Fornecedor, InventarioContagem, ItemCompraEntrada,
+    CompraEntrada, ContaPagar, Fornecedor, InventarioContagem, ItemCompraEntrada,
     MovimentacaoEstoque, Produto,
 )
 
@@ -231,7 +231,18 @@ def confirmar_recebimento(*, compra_id, empresa, usuario, mapeamentos=None):
     compra.estado = CompraEntrada.Estado.RECEBIDA
     compra.recebido_por = usuario
     compra.recebido_em = timezone.now()
-    compra.save(update_fields=("estado", "recebido_por", "recebido_em"))
+    if not compra.vencimento:
+        compra.vencimento = timezone.localdate() + timedelta(days=30)
+    compra.save(update_fields=("estado", "recebido_por", "recebido_em", "vencimento"))
+    ContaPagar.objects.get_or_create(
+        compra=compra,
+        defaults={
+            "empresa": empresa, "fornecedor": compra.fornecedor,
+            "descricao": f"NF {compra.numero_nf}/{compra.serie}".strip("/"),
+            "valor_original": compra.valor_total, "saldo": compra.valor_total,
+            "vencimento": compra.vencimento, "criado_por": usuario,
+        },
+    )
     return compra
 
 
@@ -286,11 +297,18 @@ def criar_compra_manual(*, empresa, usuario, dados):
             emitted = date.fromisoformat(raw_date)
         except ValueError:
             raise ValidationError({"data_emissao": "Informe uma data de emissão válida."})
+    due_date = None
+    raw_due = str(dados.get("vencimento", "")).strip()
+    if raw_due:
+        try:
+            due_date = date.fromisoformat(raw_due)
+        except ValueError:
+            raise ValidationError({"vencimento": "Informe uma data de vencimento válida."})
 
     compra = CompraEntrada.objects.create(
         empresa=empresa, fornecedor=fornecedor, numero_nf=numero, serie=serie,
         chave_acesso=chave, emitente_cnpj=cnpj, data_emissao=emitted,
-        criado_por=usuario,
+        vencimento=due_date, criado_por=usuario,
     )
     total = Decimal("0.00")
     seen = set()
