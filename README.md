@@ -6,9 +6,10 @@ Sistema multi-tenant para gestão de materiais de construção: backend Django/D
 
 - **Painel Master** em `/master/`: cadastro e suspensão de empresas, primeiro administrador por empresa e criação/vinculação de usuários e perfis.
 - **Painel da empresa**: catálogo, setores e endereços, estoque, vendas e movimentações, autorizações temporárias e inventário preventivo.
-- **Auditoria de estoque**: consulte entradas, vendas, devoluções e ajustes por produto, referência, empresa e operador.
-- **Importação Excel**: baixe o modelo na tela de produtos. A planilha atualiza produtos pelo código e o `estoque_atual` substitui o saldo do cadastro. Cada diferença fica no histórico. Arquivos .xlsx até 5 MB e 5.000 linhas.
+- **Estoque e auditoria**: endereçamento por setor/posição, entrada, perda com motivo, vendas, devoluções e ajustes de inventário; consulte histórico por produto, NF, empresa e operador. O saldo é por produto e empresa, sem saldos separados por depósito nesta versão.
+- **Importação Excel**: baixe o modelo na tela de produtos. A planilha atualiza produtos pelo código e o `estoque_atual` substitui o saldo na unidade base. Configure unidade de venda, unidade base e fator (ex.: 1 caixa = 12 unidades). Cada diferença fica no histórico. Arquivos .xlsx até 5 MB e 5.000 linhas.
 - **Inventário preventivo**: sorteia dias úteis e setores entre os próximos 30 dias; no dia sorteado, escolhe produtos aleatórios do setor. Durante a contagem física, as vendas dos produtos daquela amostra são pausadas. A reconciliação registra ajustes auditáveis.
+- **Pedidos e entrega**: orçamento/pedido com link público único para confirmação do cliente; o operador pode informar endereço e data solicitada, e a equipe acompanha no painel.
 - **Clientes e crédito**: cadastro por empresa, limite de crédito, vendas parcialmente pagas e contas a receber com baixas parciais no painel e API. Crédito exige conexão e confirmação do saldo no servidor.
 - **Contas a pagar**: o recebimento de NF gera obrigação do fornecedor com vencimento; o painel e a API registram pagamentos parciais e saldo pendente.
 - **Entrega**: pedidos pelo WhatsApp podem informar endereço e data solicitada; o cliente vê esses dados no link público e a equipe acompanha no painel.
