@@ -10,6 +10,8 @@ Sistema multi-tenant para gestão de materiais de construção: backend Django/D
 - **Importação Excel**: baixe o modelo na tela de produtos. A planilha atualiza produtos pelo código e o `estoque_atual` substitui o saldo do cadastro. Cada diferença fica no histórico. Arquivos .xlsx até 5 MB e 5.000 linhas.
 - **Inventário preventivo**: sorteia dias úteis e setores entre os próximos 30 dias; no dia sorteado, escolhe produtos aleatórios do setor. Durante a contagem física, as vendas dos produtos daquela amostra são pausadas. A reconciliação registra ajustes auditáveis.
 - **Clientes e crédito**: cadastro por empresa, limite de crédito, vendas parcialmente pagas e contas a receber com baixas parciais no painel e API. Crédito exige conexão e confirmação do saldo no servidor.
+- **Contas a pagar**: o recebimento de NF gera obrigação do fornecedor com vencimento; o painel e a API registram pagamentos parciais e saldo pendente.
+- **Entrega**: pedidos pelo WhatsApp podem informar endereço e data solicitada; o cliente vê esses dados no link público e a equipe acompanha no painel.
 - **PDV desktop**: login via API, seleção de empresa, busca por código/código de barras, abertura e fechamento de caixa, venda com estoque no servidor, cancelamento com token de gerente, cupom interno em TXT e fila local idempotente para falhas de conexão.
 - **Cupom interno**: vendas são registradas no servidor; emissão fiscal NF-e/NFC-e depende da configuração de provedor e certificado, ainda não habilitada neste scaffold.
 
@@ -62,7 +64,7 @@ As operações protegidas exigem conexão com o servidor. Vendas que falham por 
 - `GET /api/v1/minhas-empresas/`
 - `GET /api/v1/produtos/` e `GET /api/v1/categorias/`
 - `POST /api/v1/caixas/abrir/`, `POST /api/v1/caixas/{id}/fechar/`, `GET /api/v1/caixas/{id}/resumo/`, `POST /api/v1/caixas/movimentacoes/`
-- `GET/POST /api/v1/clientes/` e `GET/POST /api/v1/contas-receber/`
+- `GET/POST /api/v1/clientes/`, `/api/v1/contas-receber/` e `/api/v1/contas-pagar/`
 - `POST /api/v1/vendas/`
 - `POST /api/v1/autorizacoes/`
 - `POST /api/v1/pedidos-web/` e `GET /api/v1/pedidos-web/`
@@ -76,7 +78,7 @@ Nunca comite segredos, tokens ou credenciais de produção. Antes de publicar, c
 
 
 ## Pedidos web pelo WhatsApp
-No PDV Windows, monte o carrinho e escolha **Pedido via WhatsApp**. Informe o nome e o WhatsApp do cliente; o PDV cria um pedido com link público aleatório e abre o WhatsApp com a mensagem pronta. O operador confirma o envio no próprio WhatsApp. O cliente consulta o resumo e confirma no link, sem criar conta. A confirmação aparece em **Pedidos web** no painel da empresa para a equipe separar. Ao concluir o atendimento, o operador finaliza o pedido no caixa e o sistema registra a venda e baixa o estoque.
+No PDV Windows, monte o carrinho e escolha **Pedido via WhatsApp**. Informe o nome, WhatsApp, endereço e data desejada para entrega (os dois últimos são opcionais); o PDV cria um pedido com link público aleatório e abre o WhatsApp com a mensagem pronta. O operador confirma o envio no próprio WhatsApp. O cliente consulta o resumo e confirma no link, sem criar conta. A confirmação aparece em **Pedidos web** no painel da empresa para a equipe separar. Ao concluir o atendimento, o operador finaliza o pedido no caixa e o sistema registra a venda e baixa o estoque.
 
 Os links expiram após 7 dias. O pedido não reserva nem baixa estoque enquanto aguarda confirmação; disponibilidade e preços são conferidos novamente ao finalizar. O envio usa o link de compartilhamento do WhatsApp (sem API Business); envio automático requer configurar um provedor/WhatsApp Business.
 
