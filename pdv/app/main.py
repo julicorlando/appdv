@@ -335,7 +335,9 @@ class PDVWindow(QMainWindow):
                 )
                 return
             restored[product_id] = {
-                "produto": product, "quantidade": Decimal(str(line["quantidade"]))
+                "produto": product,
+                "quantidade": Decimal(str(line["quantidade"])),
+                "desconto": Decimal(str(line.get("desconto", "0"))),
             }
         if self.cart:
             decision = QMessageBox.question(
@@ -413,10 +415,9 @@ class PDVWindow(QMainWindow):
         for row, item in enumerate(rows):
             product, quantity = item["produto"], item["quantidade"]
             price = Decimal(str(product["preco_venda"]))
-            line_total = quantity * price
-            total += line_total
             discount = Decimal(str(item.get("desconto", "0")))
             line_total = (quantity * price - discount).quantize(Decimal("0.01"))
+            total += line_total
             values = [
                 product["nome"], str(quantity), f"R$ {price:.2f}",
                 f"R$ {discount:.2f}", f"R$ {line_total:.2f}",
