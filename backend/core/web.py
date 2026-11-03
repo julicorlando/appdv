@@ -363,8 +363,8 @@ def baixar_modelo_planilha(request, empresa_id):
     sheet = workbook.active
     sheet.title = "Produtos"
     sheet.append([
-        "codigo", "nome", "categoria", "unidade", "preco_venda",
-        "estoque_atual", "estoque_minimo", "setor", "endereco", "codigo_barras",
+        "codigo", "nome", "categoria", "unidade", "unidade_estoque",
+        "fator_conversao", "preco_venda", "estoque_atual", "estoque_minimo", "setor", "endereco", "codigo_barras",
     ])
     instructions = workbook.create_sheet("Instruções")
     instructions.append(["Campo", "Obrigatório", "Descrição", "Exemplo"])
@@ -372,8 +372,10 @@ def baixar_modelo_planilha(request, empresa_id):
     instructions.append(["nome", "Sim", "Nome que aparecerá no catálogo e no PDV.", "Cimento CP-II 50kg"])
     instructions.append(["categoria", "Não", "Se vazio, será usado/criado Geral.", "Cimento"])
     instructions.append(["unidade", "Não", "Unidade de venda; padrão UN.", "SC, KG, M, M2"])
+    instructions.append(["unidade_estoque", "Não", "Unidade em que o saldo físico é contado; vazio = unidade de venda.", "UN"])
+    instructions.append(["fator_conversao", "Não", "Unidades de estoque consumidas por unidade vendida; padrão 1.", "12"])
     instructions.append(["preco_venda", "Sim", "Preço unitário em reais, sem símbolo.", "34,90"])
-    instructions.append(["estoque_atual", "Sim", "Novo saldo absoluto; substitui o saldo atual do cadastro.", "120"])
+    instructions.append(["estoque_atual", "Sim", "Saldo absoluto na unidade de estoque; substitui o saldo atual.", "120"])
     instructions.append(["estoque_minimo", "Não", "Gatilho de alerta de reposição.", "20"])
     instructions.append(["setor", "Sim", "Área do armazém. Usada no sorteio preventivo.", "Depósito A"])
     instructions.append(["endereco", "Sim", "Posição física dentro do setor.", "A-03-02"])
