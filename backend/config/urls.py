@@ -4,7 +4,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from core.api import (
-    AbrirCaixaView, CaixaResumoView, ClientesView, ContasReceberView, CategoriaViewSet, CriarTokenView, DashboardEmpresaAPIView, EmpresaInfoView, FecharCaixaView, MovimentacaoCaixaView,
+    AbrirCaixaView, CaixaResumoView, ClientesView, ContasPagarView, ContasReceberView, CategoriaViewSet, CriarTokenView, DashboardEmpresaAPIView, EmpresaInfoView, FecharCaixaView, MovimentacaoCaixaView,
     MinhasEmpresasView, PedidosWebView, FinalizarPedidoWebView, ProdutoViewSet, VendaViewSet,
 )
 from core import web
@@ -28,6 +28,7 @@ urlpatterns = [
     path("empresa/<int:empresa_id>/compras/", web.empresa_compras, name="empresa-compras"),
     path("empresa/<int:empresa_id>/clientes/", web.empresa_clientes, name="empresa-clientes"),
     path("empresa/<int:empresa_id>/contas-receber/", web.empresa_contas_receber, name="empresa-contas-receber"),
+    path("empresa/<int:empresa_id>/contas-pagar/", web.empresa_contas_pagar, name="empresa-contas-pagar"),
     path("empresa/<int:empresa_id>/configuracao/", web.empresa_configuracao, name="empresa-configuracao"),
     path("empresa/<int:empresa_id>/produtos/modelo-xlsx/", web.baixar_modelo_planilha, name="modelo-planilha"),
     path("empresa/<int:empresa_id>/produtos/importar-xlsx/", web.importar_produtos_excel, name="importar-planilha"),
@@ -47,6 +48,7 @@ urlpatterns = [
     path("api/v1/empresa/resumo/", DashboardEmpresaAPIView.as_view(), name="empresa-resumo"),
     path("api/v1/clientes/", ClientesView.as_view(), name="clientes"),
     path("api/v1/contas-receber/", ContasReceberView.as_view(), name="contas-receber"),
+    path("api/v1/contas-pagar/", ContasPagarView.as_view(), name="contas-pagar"),
     path("api/v1/caixas/abrir/", AbrirCaixaView.as_view(), name="abrir-caixa"),
     path("api/v1/caixas/<int:caixa_id>/fechar/", FecharCaixaView.as_view(), name="fechar-caixa"),
     path("api/v1/caixas/<int:caixa_id>/resumo/", CaixaResumoView.as_view(), name="resumo-caixa"),
