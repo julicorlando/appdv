@@ -539,22 +539,29 @@ button {{ width:100%; padding:10px; margin:12px 0; }}
             for item in pedido["itens"]
         )
         total = Decimal(str(pedido["total"]))
+        if not self.cash_id:
+            QMessageBox.warning(self, "Caixa fechado", "Abra o caixa para finalizar este pedido.")
+            return
+        payments = self._collect_payments(total)
+        if payments is None:
+            return
+        payment_summary = ", ".join(
+            f"{payment['meio']}: R$ {Decimal(str(payment['valor'])):.2f}"
+            for payment in payments
+        )
         confirm = QMessageBox.question(
             self, f"Finalizar pedido #{pedido['id']}",
             f"Cliente: {pedido['cliente_nome']}\n\n{resumo}\n\n"
-            f"Total: R$ {total:.2f}\nPagamento: {self.payment.currentText()}\n\n"
+            f"Total: R$ {total:.2f}\nPagamentos: {payment_summary}\n\n"
             "Confirmar recebimento e registrar a venda? O estoque será baixado.",
         )
         if confirm != QMessageBox.StandardButton.Yes:
             return
-        if not self.cash_id:
-            QMessageBox.warning(self, "Caixa fechado", "Abra o caixa para finalizar este pedido.")
-            return
         try:
             result = self.api.finalizar_pedido_web(
-                pedido["id"], self.cash_id,
-                [{"meio": self.payment.currentText(), "valor": str(total)}],
+                pedido["id"], self.cash_id, payments,
             )
+            self.last_payments = payments
             QMessageBox.information(
                 self, "Venda concluída",
                 f"Pedido #{pedido['id']} finalizado como venda #{result['venda_id']}."
