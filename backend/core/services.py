@@ -89,12 +89,24 @@ def registrar_venda(*, empresa, usuario, dados):
         try:
             meio = pagamento["meio"]
             valor = Decimal(str(pagamento["valor"]))
-            if meio not in Transacao.Meio.values or not valor.is_finite() or valor <= 0:
+            recebido = Decimal(str(pagamento.get("valor_recebido", valor)))
+            troco = Decimal(str(pagamento.get("troco", "0")))
+            if (
+                meio not in Transacao.Meio.values
+                or not valor.is_finite() or valor <= 0
+                or not recebido.is_finite() or recebido < valor
+                or not troco.is_finite() or troco < 0
+            ):
+                raise ValueError
+            if meio == Transacao.Meio.DINHEIRO:
+                if (recebido - valor).quantize(Decimal("0.01")) != troco.quantize(Decimal("0.01")):
+                    raise ValueError
+            elif recebido != valor or troco != 0:
                 raise ValueError
         except (KeyError, ValueError, TypeError, InvalidOperation):
-            raise ValidationError({"pagamentos": "Forma ou valor de pagamento inválido."})
+            raise ValidationError({"pagamentos": "Forma, valor recebido ou troco inválido."})
         valores_pagamento.append(
-            (meio, valor, str(pagamento.get("referencia_externa", "")))
+            (meio, valor, recebido, troco, str(pagamento.get("referencia_externa", "")))
         )
         soma_pagamentos += valor
     if soma_pagamentos != total:
@@ -118,9 +130,10 @@ def registrar_venda(*, empresa, usuario, dados):
             empresa=empresa, produto=produto, tipo=MovimentacaoEstoque.Tipo.VENDA,
             quantidade=-quantidade_total, referencia=f"Venda #{venda.pk}", operador=usuario,
         )
-    for meio, valor, referencia in valores_pagamento:
+    for meio, valor, recebido, troco, referencia in valores_pagamento:
         Transacao.objects.create(
             empresa=empresa, venda=venda, meio=meio, valor=valor,
+            valor_recebido=recebido, troco=troco,
             referencia_externa=referencia[:120],
         )
     return venda, True
