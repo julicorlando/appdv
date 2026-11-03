@@ -175,6 +175,80 @@ class VendaViewSet(viewsets.GenericViewSet, mixins.ListModelMixin, mixins.Retrie
                         status=status.HTTP_201_CREATED if criada else status.HTTP_200_OK)
 
 
+class ClientesView(TenantAPIView):
+    def get(self, request):
+        empresa, membro = self.get_empresa(request)
+        from .models import Cliente
+        clientes = Cliente.objects.filter(empresa=empresa, ativo=True).order_by("nome")[:500]
+        return Response([{
+            "id": c.pk, "nome": c.nome, "documento": c.documento,
+            "telefone": c.telefone, "email": c.email,
+            "limite_credito": str(c.limite_credito),
+        } for c in clientes])
+
+    def post(self, request):
+        empresa, membro = self.get_empresa(request)
+        if membro.papel not in (MembroEmpresa.Papel.ADMIN, MembroEmpresa.Papel.GERENTE):
+            raise PermissionDenied("Somente gerente ou administrador pode cadastrar clientes.")
+        from .models import Cliente
+        nome = str(request.data.get("nome", "")).strip()
+        if not nome:
+            raise ValidationError({"nome": "Informe o nome do cliente."})
+        try:
+            limite = Decimal(str(request.data.get("limite_credito", "0")))
+            if not limite.is_finite() or limite < 0:
+                raise ValueError
+        except (ValueError, TypeError, InvalidOperation):
+            raise ValidationError({"limite_credito": "Informe um limite válido."})
+        cliente = Cliente.objects.create(
+            empresa=empresa, nome=nome[:180],
+            documento="".join(ch for ch in str(request.data.get("documento", "")) if ch.isdigit())[:14],
+            telefone=str(request.data.get("telefone", ""))[:30],
+            email=str(request.data.get("email", ""))[:254],
+            endereco=str(request.data.get("endereco", ""))[:250],
+            limite_credito=limite,
+        )
+        return Response({"id": cliente.pk, "nome": cliente.nome}, status=status.HTTP_201_CREATED)
+
+
+class ContasReceberView(TenantAPIView):
+    def get(self, request):
+        empresa, membro = self.get_empresa(request)
+        from .models import ContaReceber
+        contas = ContaReceber.objects.filter(
+            empresa=empresa, estado__in=(ContaReceber.Estado.ABERTA, ContaReceber.Estado.PARCIAL)
+        ).select_related("cliente", "venda").order_by("vencimento")[:500]
+        return Response([{
+            "id": c.pk, "cliente": c.cliente.nome, "venda": c.venda_id,
+            "valor_original": str(c.valor_original), "saldo": str(c.saldo),
+            "vencimento": c.vencimento.isoformat(), "estado": c.estado,
+        } for c in contas])
+
+    @transaction.atomic
+    def post(self, request):
+        empresa, membro = self.get_empresa(request)
+        from .models import ContaReceber, RecebimentoConta
+        try:
+            conta = ContaReceber.objects.select_for_update().get(
+                pk=request.data.get("conta"), empresa=empresa,
+                estado__in=(ContaReceber.Estado.ABERTA, ContaReceber.Estado.PARCIAL),
+            )
+            valor = Decimal(str(request.data.get("valor")))
+            meio = str(request.data.get("meio"))
+            if not valor.is_finite() or valor <= 0 or valor > conta.saldo or meio not in Transacao.Meio.values:
+                raise ValueError
+        except (ContaReceber.DoesNotExist, ValueError, TypeError, InvalidOperation):
+            raise ValidationError({"recebimento": "Conta, valor ou forma de pagamento inválidos."})
+        RecebimentoConta.objects.create(
+            conta=conta, empresa=empresa, operador=request.user,
+            meio=meio, valor=valor, referencia=str(request.data.get("referencia", ""))[:120],
+        )
+        conta.saldo -= valor
+        conta.estado = ContaReceber.Estado.QUITADA if conta.saldo == 0 else ContaReceber.Estado.PARCIAL
+        conta.save(update_fields=("saldo", "estado"))
+        return Response({"id": conta.pk, "saldo": str(conta.saldo), "estado": conta.estado})
+
+
 class AbrirCaixaView(TenantAPIView):
     def post(self, request):
         from .models import Caixa
