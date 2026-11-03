@@ -150,6 +150,7 @@ class ItemVenda(models.Model):
     quantidade = models.DecimalField(max_digits=14, decimal_places=3)
     preco_unitario = models.DecimalField(max_digits=12, decimal_places=2)
     desconto = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    fator_conversao = models.DecimalField(max_digits=12, decimal_places=6, default=1)
     total = models.DecimalField(max_digits=12, decimal_places=2)
 
 
