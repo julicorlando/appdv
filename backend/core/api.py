@@ -1,8 +1,10 @@
 from datetime import timedelta
+from decimal import Decimal, InvalidOperation
 import base64
 import mimetypes
 from django.utils import timezone
 from django.db import transaction
+from django.db.models import Sum
 from django.urls import reverse
 from rest_framework import mixins, viewsets, status
 from rest_framework.decorators import action
@@ -10,7 +12,7 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from .models import Categoria, Empresa, ItemPedidoWeb, MembroEmpresa, PedidoWeb, Produto, TokenAutorizacao, Venda
+from .models import Caixa, Categoria, Empresa, ItemPedidoWeb, MembroEmpresa, MovimentacaoCaixa, PedidoWeb, Produto, TokenAutorizacao, Transacao, Venda
 from .serializers import CategoriaSerializer, ProdutoSerializer, VendaSerializer
 from .services import cancelar_venda, registrar_venda
 from .pedido_web_services import finalizar_pedido_web
@@ -171,6 +173,107 @@ class AbrirCaixaView(TenantAPIView):
         return Response({"id": caixa.pk, "estado": caixa.estado}, status=status.HTTP_201_CREATED)
 
 
+def _resumo_caixa(caixa):
+    transacoes = list(
+        Transacao.objects.filter(venda__caixa=caixa)
+        .values("meio", "tipo").annotate(total=Sum("valor"))
+    )
+    meios = {}
+    for item in transacoes:
+        meio = item["meio"]
+        meios.setdefault(meio, {"pagamentos": Decimal("0.00"), "estornos": Decimal("0.00")})
+        chave = "pagamentos" if item["tipo"] == Transacao.Tipo.PAGAMENTO else "estornos"
+        meios[meio][chave] += item["total"] or Decimal("0.00")
+    movimentos = MovimentacaoCaixa.objects.filter(caixa=caixa).values("tipo").annotate(total=Sum("valor"))
+    sangrias = sum((x["total"] or Decimal("0") for x in movimentos if x["tipo"] == MovimentacaoCaixa.Tipo.SANGRIA), Decimal("0.00"))
+    suprimentos = sum((x["total"] or Decimal("0") for x in movimentos if x["tipo"] == MovimentacaoCaixa.Tipo.SUPRIMENTO), Decimal("0.00"))
+    dinheiro = meios.get(Transacao.Meio.DINHEIRO, {"pagamentos": Decimal("0"), "estornos": Decimal("0")})
+    esperado = (
+        caixa.saldo_abertura + dinheiro["pagamentos"] - dinheiro["estornos"]
+        + suprimentos - sangrias
+    ).quantize(Decimal("0.01"))
+    return {
+        "caixa": caixa.pk,
+        "estado": caixa.estado,
+        "aberto_em": caixa.aberto_em,
+        "fechado_em": caixa.fechado_em,
+        "saldo_abertura": str(caixa.saldo_abertura),
+        "esperado_dinheiro": str(esperado),
+        "sangrias": str(sangrias),
+        "suprimentos": str(suprimentos),
+        "pagamentos_por_meio": {
+            meio: {
+                "pagamentos": str(valores["pagamentos"]),
+                "estornos": str(valores["estornos"]),
+                "liquido": str(valores["pagamentos"] - valores["estornos"]),
+            } for meio, valores in meios.items()
+        },
+        "saldo_informado_fechamento": (
+            str(caixa.saldo_informado_fechamento)
+            if caixa.saldo_informado_fechamento is not None else None
+        ),
+        "saldo_esperado_fechamento": (
+            str(caixa.saldo_esperado_fechamento)
+            if caixa.saldo_esperado_fechamento is not None else None
+        ),
+        "diferenca_fechamento": (
+            str(caixa.diferenca_fechamento)
+            if caixa.diferenca_fechamento is not None else None
+        ),
+    }
+
+
+class CaixaResumoView(TenantAPIView):
+    def get(self, request, caixa_id):
+        empresa, membro = self.get_empresa(request)
+        try:
+            caixa = Caixa.objects.get(pk=caixa_id, empresa=empresa)
+        except Caixa.DoesNotExist:
+            raise ValidationError({"caixa": "Caixa não encontrado nesta empresa."})
+        if caixa.operador_id != request.user.pk and membro.papel not in (
+            MembroEmpresa.Papel.ADMIN, MembroEmpresa.Papel.GERENTE
+        ):
+            raise PermissionDenied("Você não pode consultar o fechamento deste caixa.")
+        resumo = _resumo_caixa(caixa)
+        resumo["saldo_informado_fechamento"] = (
+            str(caixa.saldo_informado_fechamento)
+            if caixa.saldo_informado_fechamento is not None else None
+        )
+        resumo["diferenca_atual"] = (
+            str(Decimal(str(caixa.saldo_informado_fechamento)) - Decimal(resumo["esperado_dinheiro"]))
+            if caixa.saldo_informado_fechamento is not None else None
+        )
+        return Response(resumo)
+
+
+class MovimentacaoCaixaView(TenantAPIView):
+    def post(self, request):
+        empresa, membro = self.get_empresa(request)
+        try:
+            caixa = Caixa.objects.select_for_update().get(
+                pk=request.data.get("caixa"), empresa=empresa,
+                operador=request.user, estado=Caixa.Estado.ABERTO,
+            )
+            tipo = str(request.data.get("tipo", ""))
+            valor = Decimal(str(request.data.get("valor", "")))
+            motivo = str(request.data.get("motivo", "")).strip()[:250]
+            if tipo not in MovimentacaoCaixa.Tipo.values or not valor.is_finite() or valor <= 0 or not motivo:
+                raise ValueError
+        except Caixa.DoesNotExist:
+            raise ValidationError({"caixa": "Caixa aberto do operador não encontrado."})
+        except (ValueError, TypeError, InvalidOperation):
+            raise ValidationError({"movimentacao": "Informe tipo, valor positivo e motivo."})
+        movimento = MovimentacaoCaixa.objects.create(
+            empresa=empresa, caixa=caixa, operador=request.user,
+            tipo=tipo, valor=valor, motivo=motivo,
+        )
+        return Response({
+            "id": movimento.pk, "tipo": movimento.tipo, "valor": str(movimento.valor),
+            "motivo": movimento.motivo, "criado_em": movimento.criado_em,
+            "resumo": _resumo_caixa(caixa),
+        }, status=status.HTTP_201_CREATED)
+
+
 class FecharCaixaView(TenantAPIView):
     def post(self, request, caixa_id):
         from decimal import Decimal, InvalidOperation
@@ -190,11 +293,19 @@ class FecharCaixaView(TenantAPIView):
                 )
             except Caixa.DoesNotExist:
                 raise ValidationError({"caixa": "Caixa aberto não encontrado."})
+            resumo = _resumo_caixa(caixa)
+            esperado = Decimal(resumo["esperado_dinheiro"])
             caixa.saldo_informado_fechamento = informado
+            caixa.saldo_esperado_fechamento = esperado
+            caixa.diferenca_fechamento = (informado - esperado).quantize(Decimal("0.01"))
             caixa.estado = Caixa.Estado.FECHADO
             caixa.fechado_em = timezone.now()
-            caixa.save(update_fields=("saldo_informado_fechamento", "estado", "fechado_em"))
-        return Response({"id": caixa.pk, "estado": caixa.estado, "fechado_em": caixa.fechado_em})
+            caixa.save(update_fields=(
+                "saldo_informado_fechamento", "saldo_esperado_fechamento",
+                "diferenca_fechamento", "estado", "fechado_em",
+            ))
+        return Response({"id": caixa.pk, "estado": caixa.estado, "fechado_em": caixa.fechado_em,
+                         "resumo": _resumo_caixa(caixa)})
 
 
 class CriarTokenView(TenantAPIView):
