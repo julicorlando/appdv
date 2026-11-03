@@ -1,6 +1,6 @@
 from django.contrib import admin
 from .models import (
-    Caixa, Categoria, Cliente, ContaReceber, RecebimentoConta, CompraEntrada, Empresa, Fornecedor, ItemCompraEntrada, ItemVenda, MembroEmpresa, MovimentacaoCaixa, Produto,
+    Caixa, Categoria, Cliente, ContaPagar, PagamentoContaPagar, ContaReceber, RecebimentoConta, CompraEntrada, Empresa, Fornecedor, ItemCompraEntrada, ItemVenda, MembroEmpresa, MovimentacaoCaixa, Produto,
     TokenAutorizacao, Transacao, UsuarioPerfil, Venda, MovimentacaoEstoque, InventarioContagem, ItemContagem,
 )
 
@@ -16,7 +16,7 @@ class MembroEmpresaAdmin(admin.ModelAdmin):
     list_filter = ("empresa", "papel", "ativo")
     search_fields = ("usuario__username", "usuario__email", "empresa__nome")
 
-admin.site.register([Categoria, Produto, Caixa, Venda, ItemVenda, Transacao, TokenAutorizacao, UsuarioPerfil, InventarioContagem, ItemContagem, Fornecedor, CompraEntrada, ItemCompraEntrada, MovimentacaoCaixa, Cliente, ContaReceber, RecebimentoConta])
+admin.site.register([Categoria, Produto, Caixa, Venda, ItemVenda, Transacao, TokenAutorizacao, UsuarioPerfil, InventarioContagem, ItemContagem, Fornecedor, CompraEntrada, ItemCompraEntrada, MovimentacaoCaixa, Cliente, ContaPagar, PagamentoContaPagar, ContaReceber, RecebimentoConta])
 
 @admin.register(MovimentacaoEstoque)
 class MovimentacaoEstoqueAdmin(admin.ModelAdmin):
