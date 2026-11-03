@@ -29,6 +29,52 @@
   <p class="hint">Limite de 5 MB por XML. Notas repetidas na empresa são recusadas. Para atualizar o estoque, a nota precisa ser conferida e recebida abaixo.</p>
 </section>
 
+<section class="panel">
+  <div class="panel-head">
+    <h2>Lançamento manual</h2>
+    <p>Use quando não tiver o XML. A entrada também fica como rascunho até você conferir e confirmar o recebimento.</p>
+  </div>
+  <form method="post" class="form-grid" id="manual-purchase-form">
+    {% csrf_token %}
+    <input type="hidden" name="acao" value="manual">
+    <label>Número da NF<input name="numero_nf" maxlength="20" required></label>
+    <label>Série<input name="serie" maxlength="10"></label>
+    <label>Fornecedor<input name="fornecedor" maxlength="180" required></label>
+    <label>CPF/CNPJ do fornecedor<input name="cnpj" inputmode="numeric" maxlength="14"></label>
+    <label>Data de emissão<input name="data_emissao" type="date"></label>
+    <label class="span-2">Chave de acesso (opcional)<input name="chave_acesso" inputmode="numeric" maxlength="44"></label>
+    <div class="span-2">
+      <div class="panel-head"><h3>Produtos da nota</h3><p>Escolha produtos cadastrados e informe quantidade recebida e custo unitário.</p></div>
+      <div id="manual-purchase-items">
+        <div class="manual-item-row">
+          <label>Produto<select name="produto" required><option value="">Selecione</option>{% for produto in produtos %}<option value="{{ produto.id }}">{{ produto.codigo }} · {{ produto.nome }} ({{ produto.unidade }})</option>{% endfor %}</select></label>
+          <label>Quantidade<input name="quantidade" type="number" min="0.001" step="0.001" required></label>
+          <label>Custo unitário (R$)<input name="custo_unitario" type="number" min="0" step="0.0001" required></label>
+        </div>
+      </div>
+      <button class="secondary" type="button" id="add-purchase-item">Adicionar produto</button>
+    </div>
+    <button class="primary" type="submit">Salvar NF como rascunho</button>
+  </form>
+  <template id="manual-purchase-item-template">
+    <div class="manual-item-row">
+      <label>Produto<select name="produto" required><option value="">Selecione</option>{% for produto in produtos %}<option value="{{ produto.id }}">{{ produto.codigo }} · {{ produto.nome }} ({{ produto.unidade }})</option>{% endfor %}</select></label>
+      <label>Quantidade<input name="quantidade" type="number" min="0.001" step="0.001" required></label>
+      <label>Custo unitário (R$)<input name="custo_unitario" type="number" min="0" step="0.0001" required></label>
+      <button class="danger remove-purchase-item" type="button">Remover</button>
+    </div>
+  </template>
+  <script>
+    const itemList = document.getElementById("manual-purchase-items");
+    const itemTemplate = document.getElementById("manual-purchase-item-template");
+    document.getElementById("add-purchase-item").addEventListener("click", () => {
+      itemList.appendChild(itemTemplate.content.cloneNode(true));
+    });
+    itemList.addEventListener("click", (event) => {
+      if (event.target.closest(".remove-purchase-item")) event.target.closest(".manual-item-row").remove();
+    });
+  </script>
+
 {% for compra in compras %}
 <section class="panel">
   <div class="panel-head">
