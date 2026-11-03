@@ -79,6 +79,30 @@ class Produto(models.Model):
         return f"{self.codigo} — {self.nome}"
 
 
+class Cliente(models.Model):
+    empresa = models.ForeignKey(Empresa, on_delete=models.CASCADE, related_name="clientes")
+    nome = models.CharField(max_length=180)
+    documento = models.CharField(max_length=14, blank=True)
+    telefone = models.CharField(max_length=30, blank=True)
+    email = models.EmailField(blank=True)
+    endereco = models.CharField(max_length=250, blank=True)
+    limite_credito = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    ativo = models.BooleanField(default=True)
+    criado_em = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("nome",)
+        constraints = [
+            models.UniqueConstraint(
+                fields=("empresa", "documento"), condition=~models.Q(documento=""),
+                name="uniq_documento_cliente_empresa",
+            ),
+        ]
+
+    def __str__(self):
+        return self.nome
+
+
 class Caixa(models.Model):
     class Estado(models.TextChoices):
         ABERTO = "ABERTO", "Aberto"
@@ -104,6 +128,7 @@ class Venda(models.Model):
     idempotency_key = models.UUIDField(default=uuid.uuid4)
     caixa = models.ForeignKey(Caixa, on_delete=models.PROTECT, related_name="vendas")
     operador = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    cliente = models.ForeignKey("core.Cliente", null=True, blank=True, on_delete=models.PROTECT, related_name="vendas")
     estado = models.CharField(max_length=12, choices=Estado.choices, default=Estado.CONCLUIDA)
     subtotal = models.DecimalField(max_digits=12, decimal_places=2)
     desconto = models.DecimalField(max_digits=12, decimal_places=2, default=0)
@@ -365,3 +390,38 @@ class MovimentacaoCaixa(models.Model):
 
     class Meta:
         ordering = ("-criado_em",)
+
+
+
+class ContaReceber(models.Model):
+    class Estado(models.TextChoices):
+        ABERTA = "ABERTA", "Em aberto"
+        PARCIAL = "PARCIAL", "Parcialmente paga"
+        QUITADA = "QUITADA", "Quitada"
+        CANCELADA = "CANCELADA", "Cancelada"
+
+    empresa = models.ForeignKey(Empresa, on_delete=models.CASCADE, related_name="contas_receber")
+    cliente = models.ForeignKey(Cliente, on_delete=models.PROTECT, related_name="contas_receber")
+    venda = models.OneToOneField(Venda, on_delete=models.PROTECT, related_name="conta_receber")
+    valor_original = models.DecimalField(max_digits=12, decimal_places=2)
+    saldo = models.DecimalField(max_digits=12, decimal_places=2)
+    vencimento = models.DateField(db_index=True)
+    estado = models.CharField(max_length=12, choices=Estado.choices, default=Estado.ABERTA, db_index=True)
+    criado_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    criado_em = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("vencimento", "criado_em")
+
+
+class RecebimentoConta(models.Model):
+    conta = models.ForeignKey(ContaReceber, on_delete=models.PROTECT, related_name="recebimentos")
+    empresa = models.ForeignKey(Empresa, on_delete=models.CASCADE, related_name="recebimentos_contas")
+    operador = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    meio = models.CharField(max_length=10, choices=Transacao.Meio.choices)
+    valor = models.DecimalField(max_digits=12, decimal_places=2)
+    referencia = models.CharField(max_length=120, blank=True)
+    recebido_em = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-recebido_em",)
