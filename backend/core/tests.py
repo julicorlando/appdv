@@ -7,7 +7,7 @@ from rest_framework.test import APIClient
 
 from .models import (
     Categoria, Cliente, CompraEntrada, ContaPagar, ContaReceber, Empresa,
-    Fornecedor, ItemCompraEntrada, MembroEmpresa, Produto,
+    Fornecedor, ItemCompraEntrada, MembroEmpresa, Produto, PedidoWeb,
 )
 from .purchases import confirmar_recebimento
 
@@ -84,6 +84,24 @@ class SalesAndFinanceFlowTests(TestCase):
         payable.refresh_from_db()
         self.assertEqual(payable.saldo, Decimal("20.00"))
         self.assertEqual(payable.estado, ContaPagar.Estado.PARCIAL)
+
+    def test_web_order_keeps_delivery_request(self):
+        from django.utils import timezone
+        response = self.api.post(
+            "/api/v1/pedidos-web/",
+            {
+                "cliente_nome": "Cliente Entrega",
+                "cliente_telefone": "5581999990000",
+                "endereco_entrega": "Rua de Teste, 100",
+                "entrega_solicitada_em": timezone.localdate().isoformat(),
+                "itens": [{"produto": self.product.pk, "quantidade": "2"}],
+            },
+            format="json", **self.tenant_headers,
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        order = PedidoWeb.objects.get(pk=response.data["id"])
+        self.assertEqual(order.endereco_entrega, "Rua de Teste, 100")
+        self.assertEqual(order.entrega_solicitada_em, timezone.localdate())
 
     def test_company_finance_screens_render_for_member(self):
         from django.test import Client
