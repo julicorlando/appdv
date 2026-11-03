@@ -78,3 +78,7 @@ Os links expiram após 7 dias. O pedido não reserva nem baixa estoque enquanto 
 
 ## Logo no comprovante interno
 A empresa pode enviar uma logo em **Empresa e cupom** no painel web. O cupom do PDV é gerado em HTML para mostrar a marca ApPdv e a logo do tenant, com opção de impressão em papel térmico. Os arquivos locais ficam em \`comprovantes/cupom-<venda>.html\`. O armazenamento de mídia do Docker usa o volume persistente \`app_media\`.
+
+
+## Implantação Docker Compose no Coolify
+O Compose de produção exige as variáveis \`SECRET_KEY\`, \`ALLOWED_HOSTS\`, \`CSRF_TRUSTED_ORIGINS\`, \`POSTGRES_DB\`, \`POSTGRES_USER\` e \`POSTGRES_PASSWORD\`. Configure-as no ambiente do Coolify; não versione segredos. Use uma senha de banco aleatória alfanumérica, para que a URL \`DATABASE_URL\` continue válida. O serviço web expõe internamente a porta 8000 para o proxy Coolify; o PostgreSQL não publica porta no host. Os volumes \`postgres_data\` e \`app_media\` preservam banco e imagens.

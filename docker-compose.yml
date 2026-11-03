@@ -3,15 +3,13 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_DB: armazem
-      POSTGRES_USER: armazem
-      POSTGRES_PASSWORD: armazem-dev
-    ports:
-      - "5432:5432"
+      POSTGRES_DB: \${POSTGRES_DB:?Configure POSTGRES_DB in Coolify}
+      POSTGRES_USER: \${POSTGRES_USER:?Configure POSTGRES_USER in Coolify}
+      POSTGRES_PASSWORD: \${POSTGRES_PASSWORD:?Configure POSTGRES_PASSWORD in Coolify}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U armazem -d armazem"]
+      test: ["CMD-SHELL", "pg_isready -U \${POSTGRES_USER} -d \${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -19,14 +17,15 @@ services:
   web:
     build: .
     restart: unless-stopped
-    env_file:
-      - backend/.env
     environment:
-      DATABASE_URL: postgresql://armazem:armazem-dev@db:5432/armazem
-      ALLOWED_HOSTS: localhost,127.0.0.1
-      DEBUG: "True"
-    ports:
-      - "8000:8000"
+      SECRET_KEY: \${SECRET_KEY:?Configure SECRET_KEY in Coolify}
+      DEBUG: "False"
+      ALLOWED_HOSTS: \${ALLOWED_HOSTS:?Configure ALLOWED_HOSTS in Coolify}
+      CSRF_TRUSTED_ORIGINS: \${CSRF_TRUSTED_ORIGINS:?Configure CSRF_TRUSTED_ORIGINS in Coolify}
+      DATABASE_URL: postgresql://\${POSTGRES_USER}:\${POSTGRES_PASSWORD}@db:5432/\${POSTGRES_DB}
+      WEB_CONCURRENCY: \${WEB_CONCURRENCY:-3}
+    expose:
+      - "8000"
     volumes:
       - app_media:/app/media
     depends_on:
