@@ -374,6 +374,7 @@ class PDVWindow(QMainWindow):
                 product.get("codigo", ""), product.get("nome", ""),
                 product.get("setor", ""), product.get("endereco", ""),
                 f"R$ {Decimal(str(product.get('preco_venda', 0))):.2f}",
+                str(product.get("estoque_atual", "0")),
             ]
             for col, value in enumerate(values):
                 self.catalog.setItem(row, col, QTableWidgetItem(str(value)))
