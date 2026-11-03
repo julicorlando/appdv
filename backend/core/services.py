@@ -1,12 +1,14 @@
 import uuid
+from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 
 from django.db import transaction
+from django.db.models import Sum
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from .models import (
-    Caixa, InventarioContagem, ItemContagem, ItemVenda, MembroEmpresa, MovimentacaoEstoque, Produto, TokenAutorizacao,
+    Caixa, Cliente, ContaReceber, InventarioContagem, ItemContagem, ItemVenda, MembroEmpresa, MovimentacaoEstoque, Produto, TokenAutorizacao,
     Transacao, Venda,
 )
 
@@ -34,10 +36,26 @@ def registrar_venda(*, empresa, usuario, dados):
 
     linhas = dados.get("itens")
     pagamentos = dados.get("pagamentos")
+    try:
+        credito = Decimal(str(dados.get("credito", "0")))
+        if not credito.is_finite() or credito < 0:
+            raise ValueError
+    except (ValueError, TypeError, InvalidOperation):
+        raise ValidationError({"credito": "Informe um valor de crédito válido."})
     if not isinstance(linhas, list) or not linhas:
         raise ValidationError({"itens": "A venda precisa conter ao menos um produto."})
-    if not isinstance(pagamentos, list) or not pagamentos:
-        raise ValidationError({"pagamentos": "Informe ao menos uma forma de pagamento."})
+    if not isinstance(pagamentos, list) or (not pagamentos and credito == 0):
+        raise ValidationError({"pagamentos": "Informe pagamento ou valor lançado a crédito."})
+
+    cliente = None
+    cliente_id = dados.get("cliente")
+    if cliente_id:
+        try:
+            cliente = Cliente.objects.get(pk=cliente_id, empresa=empresa, ativo=True)
+        except (Cliente.DoesNotExist, ValueError, TypeError):
+            raise ValidationError({"cliente": "Cliente ativo não encontrado nesta empresa."})
+    if credito > 0 and not cliente:
+        raise ValidationError({"cliente": "Selecione um cliente para registrar venda a prazo."})
 
     try:
         membro = MembroEmpresa.objects.get(empresa=empresa, usuario=usuario, ativo=True)
@@ -118,12 +136,29 @@ def registrar_venda(*, empresa, usuario, dados):
             (meio, valor, recebido, troco, str(pagamento.get("referencia_externa", "")))
         )
         soma_pagamentos += valor
-    if soma_pagamentos != total:
-        raise ValidationError({"pagamentos": "A soma dos pagamentos deve ser igual ao total da venda."})
+    if (soma_pagamentos + credito).quantize(Decimal("0.01")) != total:
+        raise ValidationError({"pagamentos": "Pagamentos e crédito precisam corresponder ao total da venda."})
+    if credito > 0:
+        saldo_aberto = ContaReceber.objects.filter(
+            empresa=empresa, cliente=cliente,
+            estado__in=(ContaReceber.Estado.ABERTA, ContaReceber.Estado.PARCIAL),
+        ).aggregate(total=Sum("saldo"))["total"] or Decimal("0")
+        limite = cliente.limite_credito
+        if limite <= 0 or saldo_aberto + credito > limite:
+            raise ValidationError({
+                "credito": f"Crédito recusado. Limite: R$ {limite:.2f}; saldo em aberto: R$ {saldo_aberto:.2f}."
+            })
+        raw_due = str(dados.get("vencimento") or (timezone.localdate() + timedelta(days=30)).isoformat())
+        try:
+            vencimento = timezone.datetime.fromisoformat(raw_due).date()
+        except (ValueError, TypeError):
+            raise ValidationError({"vencimento": "Informe uma data de vencimento válida."})
+        if vencimento < timezone.localdate():
+            raise ValidationError({"vencimento": "A data de vencimento não pode estar no passado."})
 
     venda = Venda.objects.create(
         empresa=empresa, idempotency_key=chave, caixa=caixa, operador=usuario,
-        estado=Venda.Estado.CONCLUIDA, subtotal=subtotal, desconto=desconto_total,
+        cliente=cliente, estado=Venda.Estado.CONCLUIDA, subtotal=subtotal, desconto=desconto_total,
         total=total, observacao=str(dados.get("observacao", ""))[:2000],
     )
     for produto, quantidade, desconto, total_linha in itens_calculados:
@@ -144,6 +179,12 @@ def registrar_venda(*, empresa, usuario, dados):
             empresa=empresa, venda=venda, meio=meio, valor=valor,
             valor_recebido=recebido, troco=troco,
             referencia_externa=referencia[:120],
+        )
+    if credito > 0:
+        ContaReceber.objects.create(
+            empresa=empresa, cliente=cliente, venda=venda,
+            valor_original=credito, saldo=credito, vencimento=vencimento,
+            criado_por=usuario,
         )
     return venda, True
 
