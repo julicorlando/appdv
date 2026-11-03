@@ -123,15 +123,14 @@ class PDVWindow(QMainWindow):
         footer = QHBoxLayout()
         self.total = QLabel("Total: R$ 0,00")
         self.total.setStyleSheet("font-size: 24px; font-weight: 800")
-        self.payment = QComboBox()
-        self.payment.addItems(["DINHEIRO", "PIX", "CARTAO"])
+        self.payment_hint = QLabel("Pagamento dividido e troco definidos ao finalizar")
+        self.last_payments = []
         self.pay = QPushButton("Finalizar venda")
         self.pay.clicked.connect(self._checkout)
         self.web_order = QPushButton("Pedido via WhatsApp")
         self.web_order.clicked.connect(self._create_web_order)
         footer.addWidget(self.total, 1)
-        footer.addWidget(QLabel("Pagamento"))
-        footer.addWidget(self.payment)
+        footer.addWidget(self.payment_hint)
         footer.addWidget(self.pay)
         footer.addWidget(self.web_order)
         layout.addLayout(footer)
@@ -255,6 +254,65 @@ class PDVWindow(QMainWindow):
                 self.cart_table.setItem(row, col, QTableWidgetItem(str(value)))
         self.total.setText(f"Total: R$ {total:.2f}")
 
+    def _collect_payments(self, total):
+        """Collect one or more payment methods and calculate cash change."""
+        methods = ["DINHEIRO", "PIX", "CARTAO", "OUTRO"]
+        labels = ["Dinheiro", "PIX", "Cartão", "Outro"]
+        remaining = total.quantize(Decimal("0.01"))
+        payments = []
+        while remaining > 0:
+            if len(payments) >= 10:
+                QMessageBox.warning(self, "Pagamento", "Limite de 10 formas de pagamento por venda.")
+                return None
+            method, accepted = QInputDialog.getItem(
+                self, "Forma de pagamento",
+                f"Falta pagar R$ {remaining:.2f}. Selecione a próxima forma:",
+                labels, 0, False,
+            )
+            if not accepted:
+                return None
+            payment_method = methods[labels.index(method)]
+            if payment_method == "DINHEIRO":
+                received_value, accepted = QInputDialog.getDouble(
+                    self, "Dinheiro recebido",
+                    f"Valor recebido em dinheiro (R$). Falta pagar R$ {remaining:.2f}:",
+                    float(remaining), 0.01, 10000000.00, 2,
+                )
+                if not accepted:
+                    return None
+                received = Decimal(str(received_value)).quantize(Decimal("0.01"))
+                applied = min(received, remaining)
+                change = max(received - remaining, Decimal("0")).quantize(Decimal("0.01"))
+            else:
+                applied_value, accepted = QInputDialog.getDouble(
+                    self, "Valor do pagamento",
+                    f"Valor pago em {method} (R$). Falta pagar R$ {remaining:.2f}:",
+                    float(remaining), 0.01, float(remaining), 2,
+                )
+                if not accepted:
+                    return None
+                applied = Decimal(str(applied_value)).quantize(Decimal("0.01"))
+                received = applied
+                change = Decimal("0.00")
+            if applied <= 0:
+                QMessageBox.warning(self, "Pagamento", "O valor pago precisa ser maior que zero.")
+                continue
+            payments.append({
+                "meio": payment_method,
+                "valor": str(applied),
+                "valor_recebido": str(received),
+                "troco": str(change),
+            })
+            remaining = (remaining - applied).quantize(Decimal("0.01"))
+            if remaining > 0:
+                result = QMessageBox.question(
+                    self, "Pagamento parcial",
+                    f"Restam R$ {remaining:.2f}. Adicionar outra forma de pagamento?",
+                )
+                if result != QMessageBox.StandardButton.Yes:
+                    return None
+        return payments
+
     def _checkout(self):
         if not self.cash_id:
             QMessageBox.warning(self, "Caixa", "Abra o caixa com conexão antes de vender.")
@@ -266,6 +324,10 @@ class PDVWindow(QMainWindow):
              for item in self.cart.values()),
             Decimal("0"),
         ).quantize(Decimal("0.01"))
+        payments = self._collect_payments(total)
+        if payments is None:
+            return
+        self.last_payments = payments
         key = str(uuid.uuid4())
         payload = {
             "idempotency_key": key,
@@ -275,9 +337,7 @@ class PDVWindow(QMainWindow):
                 {"produto": product_id, "quantidade": str(item["quantidade"]), "desconto": "0"}
                 for product_id, item in self.cart.items()
             ],
-            "pagamentos": [
-                {"meio": self.payment.currentText(), "valor": str(total)}
-            ],
+            "pagamentos": payments,
         }
         try:
             response = self.api.registrar_venda(payload)
@@ -380,6 +440,15 @@ class PDVWindow(QMainWindow):
         system_img = f"<img class='system-logo' src='{system_logo}' alt='ApPdv'>" if system_logo else ""
         company_img = f"<img class='company-logo' src='{company_logo}' alt='Logo {company_name}'>" if company_logo else ""
         tax_id = f"<div>{cnpj}</div>" if cnpj else ""
+        payment_labels = {
+            "DINHEIRO": "Dinheiro", "PIX": "PIX",
+            "CARTAO": "Cartão", "OUTRO": "Outro",
+        }
+        payment_text = ", ".join(
+            f"{payment_labels.get(p['meio'], p['meio'])}: R$ {Decimal(str(p['valor'])):.2f}"
+            for p in self.last_payments
+        )
+        change = sum((Decimal(str(p.get("troco", "0"))) for p in self.last_payments), Decimal("0"))
         return f"""<!doctype html>
 <html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>Cupom interno #{sale_id}</title>
@@ -406,7 +475,8 @@ button {{ width:100%; padding:10px; margin:12px 0; }}
 <div>Venda #{sale_id}</div><div>{datetime.now().strftime('%d/%m/%Y %H:%M:%S')}</div></header>
 <hr class="rule"><table><tbody>{"".join(rows)}</tbody></table><hr class="rule">
 <p class="total">TOTAL: R$ {total:.2f}</p>
-<p>Pagamento: {html.escape(self.payment.currentText())}</p>
+<p>Pagamento: {html.escape(payment_text or "—")}</p>
+<p>Troco: R$ {change:.2f}</p>
 <div class="footer">Documento não fiscal. Válido apenas como comprovante interno.</div>
 <button onclick="window.print()">Imprimir comprovante</button>
 </body></html>"""
