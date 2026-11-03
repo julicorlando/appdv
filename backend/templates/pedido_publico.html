@@ -5,6 +5,9 @@
   <p class="eyebrow">{{ pedido.empresa.nome }}</p>
   <h1>Pedido #{{ pedido.id }}</h1>
   <p>Cliente: {{ pedido.cliente_nome }} · Status: <strong>{{ pedido.get_estado_display }}</strong></p>
+  {% if pedido.entrega_solicitada_em or pedido.endereco_entrega %}
+  <p><strong>Entrega solicitada:</strong> {{ pedido.entrega_solicitada_em|date:"d/m/Y"|default:"A combinar" }}{% if pedido.endereco_entrega %} · {{ pedido.endereco_entrega }}{% endif %}</p>
+  {% endif %}
   <p>Confira os produtos e valores abaixo. Este link é exclusivo para seu pedido.</p>
   <div class="table-wrap"><table><thead><tr><th>Produto</th><th>Qtd.</th><th>Unitário</th><th>Total</th></tr></thead><tbody>
     {% for item in itens %}<tr><td>{{ item.nome_produto }}</td><td>{{ item.quantidade }}</td><td>R$ {{ item.preco_unitario|floatformat:2 }}</td><td>R$ {{ item.total|floatformat:2 }}</td></tr>{% endfor %}

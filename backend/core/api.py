@@ -1,8 +1,10 @@
-from datetime import timedelta
+from datetime import date, timedelta
+from decimal import Decimal, InvalidOperation
 import base64
 import mimetypes
 from django.utils import timezone
 from django.db import transaction
+from django.db.models import F, Sum
 from django.urls import reverse
 from rest_framework import mixins, viewsets, status
 from rest_framework.decorators import action
@@ -10,7 +12,7 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from .models import Categoria, Empresa, ItemPedidoWeb, MembroEmpresa, PedidoWeb, Produto, TokenAutorizacao, Venda
+from .models import Caixa, Categoria, Empresa, ItemPedidoWeb, MembroEmpresa, MovimentacaoCaixa, PedidoWeb, Produto, TokenAutorizacao, Transacao, Venda
 from .serializers import CategoriaSerializer, ProdutoSerializer, VendaSerializer
 from .services import cancelar_venda, registrar_venda
 from .pedido_web_services import finalizar_pedido_web
@@ -46,6 +48,34 @@ class EmpresaInfoView(TenantAPIView):
         return Response({
             "id": empresa.pk, "nome": empresa.nome, "cnpj": empresa.cnpj,
             "logo_data_url": logo_data_url,
+        })
+
+
+class DashboardEmpresaAPIView(TenantAPIView):
+    def get(self, request):
+        from .models import MembroEmpresa
+        empresa, membro = self.get_empresa(request)
+        if membro.papel not in (MembroEmpresa.Papel.ADMIN, MembroEmpresa.Papel.GERENTE):
+            raise PermissionDenied("A área administrativa exige perfil de gerente ou administrador.")
+        hoje = timezone.localdate()
+        vendas = Venda.objects.filter(
+            empresa=empresa, estado=Venda.Estado.CONCLUIDA
+        )
+        dia = vendas.filter(realizada_em__date=hoje)
+        mes = vendas.filter(realizada_em__year=hoje.year, realizada_em__month=hoje.month)
+        return Response({
+            "empresa": empresa.nome,
+            "produtos_ativos": Produto.objects.filter(empresa=empresa, ativo=True).count(),
+            "estoque_baixo": Produto.objects.filter(
+                empresa=empresa, ativo=True, estoque_atual__lte=F("estoque_minimo")
+            ).count(),
+            "vendas_hoje": dia.count(),
+            "faturamento_hoje": str(dia.aggregate(total=Sum("total"))["total"] or 0),
+            "vendas_mes": mes.count(),
+            "faturamento_mes": str(mes.aggregate(total=Sum("total"))["total"] or 0),
+            "pedidos_confirmados": PedidoWeb.objects.filter(
+                empresa=empresa, estado=PedidoWeb.Estado.CONFIRMADO
+            ).count(),
         })
 
 
@@ -145,6 +175,122 @@ class VendaViewSet(viewsets.GenericViewSet, mixins.ListModelMixin, mixins.Retrie
                         status=status.HTTP_201_CREATED if criada else status.HTTP_200_OK)
 
 
+class ClientesView(TenantAPIView):
+    def get(self, request):
+        empresa, membro = self.get_empresa(request)
+        from .models import Cliente
+        clientes = Cliente.objects.filter(empresa=empresa, ativo=True).order_by("nome")[:500]
+        return Response([{
+            "id": c.pk, "nome": c.nome, "documento": c.documento,
+            "telefone": c.telefone, "email": c.email,
+            "limite_credito": str(c.limite_credito),
+        } for c in clientes])
+
+    def post(self, request):
+        empresa, membro = self.get_empresa(request)
+        if membro.papel not in (MembroEmpresa.Papel.ADMIN, MembroEmpresa.Papel.GERENTE):
+            raise PermissionDenied("Somente gerente ou administrador pode cadastrar clientes.")
+        from .models import Cliente
+        nome = str(request.data.get("nome", "")).strip()
+        if not nome:
+            raise ValidationError({"nome": "Informe o nome do cliente."})
+        try:
+            limite = Decimal(str(request.data.get("limite_credito", "0")))
+            if not limite.is_finite() or limite < 0:
+                raise ValueError
+        except (ValueError, TypeError, InvalidOperation):
+            raise ValidationError({"limite_credito": "Informe um limite válido."})
+        cliente = Cliente.objects.create(
+            empresa=empresa, nome=nome[:180],
+            documento="".join(ch for ch in str(request.data.get("documento", "")) if ch.isdigit())[:14],
+            telefone=str(request.data.get("telefone", ""))[:30],
+            email=str(request.data.get("email", ""))[:254],
+            endereco=str(request.data.get("endereco", ""))[:250],
+            limite_credito=limite,
+        )
+        return Response({"id": cliente.pk, "nome": cliente.nome}, status=status.HTTP_201_CREATED)
+
+
+class ContasReceberView(TenantAPIView):
+    def get(self, request):
+        empresa, membro = self.get_empresa(request)
+        from .models import ContaReceber
+        contas = ContaReceber.objects.filter(
+            empresa=empresa, estado__in=(ContaReceber.Estado.ABERTA, ContaReceber.Estado.PARCIAL)
+        ).select_related("cliente", "venda").order_by("vencimento")[:500]
+        return Response([{
+            "id": c.pk, "cliente": c.cliente.nome, "venda": c.venda_id,
+            "valor_original": str(c.valor_original), "saldo": str(c.saldo),
+            "vencimento": c.vencimento.isoformat(), "estado": c.estado,
+        } for c in contas])
+
+    @transaction.atomic
+    def post(self, request):
+        empresa, membro = self.get_empresa(request)
+        from .models import ContaReceber, RecebimentoConta
+        try:
+            conta = ContaReceber.objects.select_for_update().get(
+                pk=request.data.get("conta"), empresa=empresa,
+                estado__in=(ContaReceber.Estado.ABERTA, ContaReceber.Estado.PARCIAL),
+            )
+            valor = Decimal(str(request.data.get("valor")))
+            meio = str(request.data.get("meio"))
+            if not valor.is_finite() or valor <= 0 or valor > conta.saldo or meio not in Transacao.Meio.values:
+                raise ValueError
+        except (ContaReceber.DoesNotExist, ValueError, TypeError, InvalidOperation):
+            raise ValidationError({"recebimento": "Conta, valor ou forma de pagamento inválidos."})
+        RecebimentoConta.objects.create(
+            conta=conta, empresa=empresa, operador=request.user,
+            meio=meio, valor=valor, referencia=str(request.data.get("referencia", ""))[:120],
+        )
+        conta.saldo -= valor
+        conta.estado = ContaReceber.Estado.QUITADA if conta.saldo == 0 else ContaReceber.Estado.PARCIAL
+        conta.save(update_fields=("saldo", "estado"))
+        return Response({"id": conta.pk, "saldo": str(conta.saldo), "estado": conta.estado})
+
+
+class ContasPagarView(TenantAPIView):
+    def get(self, request):
+        empresa, membro = self.get_empresa(request)
+        if membro.papel not in (MembroEmpresa.Papel.ADMIN, MembroEmpresa.Papel.GERENTE):
+            raise PermissionDenied("A área financeira exige perfil de gerente ou administrador.")
+        from .models import ContaPagar
+        contas = ContaPagar.objects.filter(
+            empresa=empresa, estado__in=(ContaPagar.Estado.ABERTA, ContaPagar.Estado.PARCIAL)
+        ).select_related("fornecedor").order_by("vencimento")[:500]
+        return Response([{
+            "id": c.pk, "fornecedor": c.fornecedor.nome, "descricao": c.descricao,
+            "valor_original": str(c.valor_original), "saldo": str(c.saldo),
+            "vencimento": c.vencimento.isoformat(), "estado": c.estado,
+        } for c in contas])
+
+    @transaction.atomic
+    def post(self, request):
+        empresa, membro = self.get_empresa(request)
+        if membro.papel not in (MembroEmpresa.Papel.ADMIN, MembroEmpresa.Papel.GERENTE):
+            raise PermissionDenied("Somente gerente ou administrador pode registrar pagamentos.")
+        from .models import ContaPagar, PagamentoContaPagar
+        try:
+            conta = ContaPagar.objects.select_for_update().get(
+                pk=request.data.get("conta"), empresa=empresa,
+                estado__in=(ContaPagar.Estado.ABERTA, ContaPagar.Estado.PARCIAL),
+            )
+            valor = Decimal(str(request.data.get("valor")))
+            meio = str(request.data.get("meio"))
+            if not valor.is_finite() or valor <= 0 or valor > conta.saldo or meio not in Transacao.Meio.values:
+                raise ValueError
+        except (ContaPagar.DoesNotExist, ValueError, TypeError, InvalidOperation):
+            raise ValidationError({"pagamento": "Conta, valor ou forma de pagamento inválidos."})
+        PagamentoContaPagar.objects.create(
+            conta=conta, empresa=empresa, operador=request.user,
+            meio=meio, valor=valor, referencia=str(request.data.get("referencia", ""))[:120],
+        )
+        conta.saldo -= valor
+        conta.estado = ContaPagar.Estado.QUITADA if conta.saldo == 0 else ContaPagar.Estado.PARCIAL
+        conta.save(update_fields=("saldo", "estado"))
+        return Response({"id": conta.pk, "saldo": str(conta.saldo), "estado": conta.estado})
+
+
 class AbrirCaixaView(TenantAPIView):
     def post(self, request):
         from .models import Caixa
@@ -171,6 +317,108 @@ class AbrirCaixaView(TenantAPIView):
         return Response({"id": caixa.pk, "estado": caixa.estado}, status=status.HTTP_201_CREATED)
 
 
+def _resumo_caixa(caixa):
+    transacoes = list(
+        Transacao.objects.filter(venda__caixa=caixa)
+        .values("meio", "tipo").annotate(total=Sum("valor"))
+    )
+    meios = {}
+    for item in transacoes:
+        meio = item["meio"]
+        meios.setdefault(meio, {"pagamentos": Decimal("0.00"), "estornos": Decimal("0.00")})
+        chave = "pagamentos" if item["tipo"] == Transacao.Tipo.PAGAMENTO else "estornos"
+        meios[meio][chave] += item["total"] or Decimal("0.00")
+    movimentos = MovimentacaoCaixa.objects.filter(caixa=caixa).values("tipo").annotate(total=Sum("valor"))
+    sangrias = sum((x["total"] or Decimal("0") for x in movimentos if x["tipo"] == MovimentacaoCaixa.Tipo.SANGRIA), Decimal("0.00"))
+    suprimentos = sum((x["total"] or Decimal("0") for x in movimentos if x["tipo"] == MovimentacaoCaixa.Tipo.SUPRIMENTO), Decimal("0.00"))
+    dinheiro = meios.get(Transacao.Meio.DINHEIRO, {"pagamentos": Decimal("0"), "estornos": Decimal("0")})
+    esperado = (
+        caixa.saldo_abertura + dinheiro["pagamentos"] - dinheiro["estornos"]
+        + suprimentos - sangrias
+    ).quantize(Decimal("0.01"))
+    return {
+        "caixa": caixa.pk,
+        "estado": caixa.estado,
+        "aberto_em": caixa.aberto_em,
+        "fechado_em": caixa.fechado_em,
+        "saldo_abertura": str(caixa.saldo_abertura),
+        "esperado_dinheiro": str(esperado),
+        "sangrias": str(sangrias),
+        "suprimentos": str(suprimentos),
+        "pagamentos_por_meio": {
+            meio: {
+                "pagamentos": str(valores["pagamentos"]),
+                "estornos": str(valores["estornos"]),
+                "liquido": str(valores["pagamentos"] - valores["estornos"]),
+            } for meio, valores in meios.items()
+        },
+        "saldo_informado_fechamento": (
+            str(caixa.saldo_informado_fechamento)
+            if caixa.saldo_informado_fechamento is not None else None
+        ),
+        "saldo_esperado_fechamento": (
+            str(caixa.saldo_esperado_fechamento)
+            if caixa.saldo_esperado_fechamento is not None else None
+        ),
+        "diferenca_fechamento": (
+            str(caixa.diferenca_fechamento)
+            if caixa.diferenca_fechamento is not None else None
+        ),
+    }
+
+
+class CaixaResumoView(TenantAPIView):
+    def get(self, request, caixa_id):
+        empresa, membro = self.get_empresa(request)
+        try:
+            caixa = Caixa.objects.get(pk=caixa_id, empresa=empresa)
+        except Caixa.DoesNotExist:
+            raise ValidationError({"caixa": "Caixa não encontrado nesta empresa."})
+        if caixa.operador_id != request.user.pk and membro.papel not in (
+            MembroEmpresa.Papel.ADMIN, MembroEmpresa.Papel.GERENTE
+        ):
+            raise PermissionDenied("Você não pode consultar o fechamento deste caixa.")
+        resumo = _resumo_caixa(caixa)
+        resumo["saldo_informado_fechamento"] = (
+            str(caixa.saldo_informado_fechamento)
+            if caixa.saldo_informado_fechamento is not None else None
+        )
+        resumo["diferenca_atual"] = (
+            str(Decimal(str(caixa.saldo_informado_fechamento)) - Decimal(resumo["esperado_dinheiro"]))
+            if caixa.saldo_informado_fechamento is not None else None
+        )
+        return Response(resumo)
+
+
+class MovimentacaoCaixaView(TenantAPIView):
+    @transaction.atomic
+    def post(self, request):
+        empresa, membro = self.get_empresa(request)
+        try:
+            caixa = Caixa.objects.select_for_update().get(
+                pk=request.data.get("caixa"), empresa=empresa,
+                operador=request.user, estado=Caixa.Estado.ABERTO,
+            )
+            tipo = str(request.data.get("tipo", ""))
+            valor = Decimal(str(request.data.get("valor", "")))
+            motivo = str(request.data.get("motivo", "")).strip()[:250]
+            if tipo not in MovimentacaoCaixa.Tipo.values or not valor.is_finite() or valor <= 0 or not motivo:
+                raise ValueError
+        except Caixa.DoesNotExist:
+            raise ValidationError({"caixa": "Caixa aberto do operador não encontrado."})
+        except (ValueError, TypeError, InvalidOperation):
+            raise ValidationError({"movimentacao": "Informe tipo, valor positivo e motivo."})
+        movimento = MovimentacaoCaixa.objects.create(
+            empresa=empresa, caixa=caixa, operador=request.user,
+            tipo=tipo, valor=valor, motivo=motivo,
+        )
+        return Response({
+            "id": movimento.pk, "tipo": movimento.tipo, "valor": str(movimento.valor),
+            "motivo": movimento.motivo, "criado_em": movimento.criado_em,
+            "resumo": _resumo_caixa(caixa),
+        }, status=status.HTTP_201_CREATED)
+
+
 class FecharCaixaView(TenantAPIView):
     def post(self, request, caixa_id):
         from decimal import Decimal, InvalidOperation
@@ -190,11 +438,19 @@ class FecharCaixaView(TenantAPIView):
                 )
             except Caixa.DoesNotExist:
                 raise ValidationError({"caixa": "Caixa aberto não encontrado."})
+            resumo = _resumo_caixa(caixa)
+            esperado = Decimal(resumo["esperado_dinheiro"])
             caixa.saldo_informado_fechamento = informado
+            caixa.saldo_esperado_fechamento = esperado
+            caixa.diferenca_fechamento = (informado - esperado).quantize(Decimal("0.01"))
             caixa.estado = Caixa.Estado.FECHADO
             caixa.fechado_em = timezone.now()
-            caixa.save(update_fields=("saldo_informado_fechamento", "estado", "fechado_em"))
-        return Response({"id": caixa.pk, "estado": caixa.estado, "fechado_em": caixa.fechado_em})
+            caixa.save(update_fields=(
+                "saldo_informado_fechamento", "saldo_esperado_fechamento",
+                "diferenca_fechamento", "estado", "fechado_em",
+            ))
+        return Response({"id": caixa.pk, "estado": caixa.estado, "fechado_em": caixa.fechado_em,
+                         "resumo": _resumo_caixa(caixa)})
 
 
 class CriarTokenView(TenantAPIView):
@@ -236,6 +492,8 @@ class PedidosWebView(TenantAPIView):
             "id": pedido.pk, "codigo_publico": str(pedido.codigo_publico),
             "cliente_nome": pedido.cliente_nome, "cliente_telefone": pedido.cliente_telefone,
             "estado": pedido.estado, "subtotal": str(pedido.subtotal), "total": str(pedido.total),
+            "endereco_entrega": pedido.endereco_entrega,
+            "entrega_solicitada_em": pedido.entrega_solicitada_em,
             "criado_em": pedido.criado_em, "expira_em": pedido.expira_em,
             "public_url": request.build_absolute_uri(
                 reverse("pedido-publico", kwargs={"codigo": pedido.codigo_publico})
@@ -256,6 +514,14 @@ class PedidosWebView(TenantAPIView):
         empresa, membro = self.get_empresa(request)
         nome = str(request.data.get("cliente_nome", "")).strip()[:160]
         telefone = re.sub(r"\D", "", str(request.data.get("cliente_telefone", "")))
+        endereco_entrega = str(request.data.get("endereco_entrega", "")).strip()[:250]
+        raw_delivery = str(request.data.get("entrega_solicitada_em", "")).strip()
+        try:
+            entrega_solicitada_em = date.fromisoformat(raw_delivery) if raw_delivery else None
+            if entrega_solicitada_em and entrega_solicitada_em < timezone.localdate():
+                raise ValueError
+        except ValueError:
+            raise ValidationError({"entrega_solicitada_em": "A data de entrega deve ser hoje ou uma data futura."})
         linhas = request.data.get("itens")
         if not nome or not (10 <= len(telefone) <= 15):
             raise ValidationError({"cliente": "Informe nome e telefone com DDD e código do país, se necessário."})
@@ -276,7 +542,10 @@ class PedidosWebView(TenantAPIView):
                 raise ValidationError({"itens": "Produto indisponível nesta empresa."})
             except (KeyError, ValueError, TypeError, InvalidOperation):
                 raise ValidationError({"itens": "Produto ou quantidade inválidos."})
-            produtos[produto.pk] = produtos.get(produto.pk, Decimal("0")) + quantidade
+            fator = Decimal(str(produto.fator_conversao))
+            if not fator.is_finite() or fator <= 0:
+                raise ValidationError({"itens": "Fator de conversão inválido no catálogo."})
+            produtos[produto.pk] = produtos.get(produto.pk, Decimal("0")) + (quantidade * fator)
             linha_total = (produto.preco_venda * quantidade).quantize(Decimal("0.01"))
             calculados.append((produto, quantidade, linha_total))
             subtotal += linha_total
@@ -286,6 +555,7 @@ class PedidosWebView(TenantAPIView):
                 raise ValidationError({"itens": f"Estoque insuficiente para {produto.nome}."})
         pedido = PedidoWeb.objects.create(
             empresa=empresa, cliente_nome=nome, cliente_telefone=telefone,
+            endereco_entrega=endereco_entrega, entrega_solicitada_em=entrega_solicitada_em,
             estado=PedidoWeb.Estado.AGUARDANDO_CLIENTE, subtotal=subtotal,
             total=subtotal, desconto=Decimal("0"), criado_por=request.user,
             expira_em=timezone.now() + timedelta(days=7),

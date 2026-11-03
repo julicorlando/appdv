@@ -15,7 +15,8 @@ from django.utils import timezone
 from django.utils.text import slugify
 from .forms import CategoriaSimpleForm, EmpresaForm, EmpresaLogoForm, MembroForm, ProdutoForm
 from .inventory import concluir_contagem, gerar_contagens_aleatorias, importar_planilha, iniciar_contagem
-from .models import Categoria, Empresa, InventarioContagem, ItemContagem, MembroEmpresa, MovimentacaoEstoque, PedidoWeb, Produto, TokenAutorizacao, Venda
+from .purchases import confirmar_recebimento, criar_compra_manual, importar_nfe
+from .models import Cliente, ContaPagar, PagamentoContaPagar, ContaReceber, RecebimentoConta, Categoria, CompraEntrada, Empresa, InventarioContagem, ItemContagem, MembroEmpresa, MovimentacaoEstoque, PedidoWeb, Produto, TokenAutorizacao, Venda
 
 User = get_user_model()
 
@@ -180,6 +181,43 @@ def empresa_configuracao(request, empresa_id):
         "membro": membro, "empresa": membro.empresa, "form": form,
         "logo_preview": logo_preview,
     })
+
+
+@login_required
+def empresa_baixa_perda(request, empresa_id, produto_id):
+    membro = require_membership(
+        request, empresa_id, (MembroEmpresa.Papel.ADMIN, MembroEmpresa.Papel.GERENTE)
+    )
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    try:
+        quantidade = Decimal(str(request.POST.get("quantidade", "")).replace(",", "."))
+        motivo = request.POST.get("motivo", "").strip()
+        if not quantidade.is_finite() or quantidade <= 0 or not motivo:
+            raise ValueError("Informe quantidade e motivo.")
+        with transaction.atomic():
+            produto = get_object_or_404(
+                Produto.objects.select_for_update(), pk=produto_id, empresa=membro.empresa
+            )
+            if ItemContagem.objects.filter(
+                contagem__empresa=membro.empresa,
+                contagem__estado=InventarioContagem.Estado.ABERTO,
+                produto=produto,
+            ).exists():
+                raise ValueError("Produto em inventário aberto; aguarde a conclusão.")
+            if quantidade > produto.estoque_atual:
+                raise ValueError("A perda informada excede o saldo disponível.")
+            produto.estoque_atual -= quantidade
+            produto.save(update_fields=("estoque_atual", "atualizado_em"))
+            MovimentacaoEstoque.objects.create(
+                empresa=membro.empresa, produto=produto,
+                tipo=MovimentacaoEstoque.Tipo.PERDA, quantidade=-quantidade,
+                referencia=("Perda: " + motivo)[:120], operador=request.user,
+            )
+        messages.success(request, f"Baixa de perda registrada para {produto.nome}.")
+    except Exception as exc:
+        messages.error(request, f"Não foi possível registrar a perda: {exc}")
+    return redirect("empresa-produtos", empresa_id=empresa_id)
 
 
 @login_required
@@ -362,8 +400,8 @@ def baixar_modelo_planilha(request, empresa_id):
     sheet = workbook.active
     sheet.title = "Produtos"
     sheet.append([
-        "codigo", "nome", "categoria", "unidade", "preco_venda",
-        "estoque_atual", "estoque_minimo", "setor", "endereco", "codigo_barras",
+        "codigo", "nome", "categoria", "unidade", "unidade_estoque",
+        "fator_conversao", "preco_venda", "estoque_atual", "estoque_minimo", "setor", "endereco", "codigo_barras",
     ])
     instructions = workbook.create_sheet("Instruções")
     instructions.append(["Campo", "Obrigatório", "Descrição", "Exemplo"])
@@ -371,8 +409,10 @@ def baixar_modelo_planilha(request, empresa_id):
     instructions.append(["nome", "Sim", "Nome que aparecerá no catálogo e no PDV.", "Cimento CP-II 50kg"])
     instructions.append(["categoria", "Não", "Se vazio, será usado/criado Geral.", "Cimento"])
     instructions.append(["unidade", "Não", "Unidade de venda; padrão UN.", "SC, KG, M, M2"])
+    instructions.append(["unidade_estoque", "Não", "Unidade em que o saldo físico é contado; vazio = unidade de venda.", "UN"])
+    instructions.append(["fator_conversao", "Não", "Unidades de estoque consumidas por unidade vendida; padrão 1.", "12"])
     instructions.append(["preco_venda", "Sim", "Preço unitário em reais, sem símbolo.", "34,90"])
-    instructions.append(["estoque_atual", "Sim", "Novo saldo absoluto; substitui o saldo atual do cadastro.", "120"])
+    instructions.append(["estoque_atual", "Sim", "Saldo absoluto na unidade de estoque; substitui o saldo atual.", "120"])
     instructions.append(["estoque_minimo", "Não", "Gatilho de alerta de reposição.", "20"])
     instructions.append(["setor", "Sim", "Área do armazém. Usada no sorteio preventivo.", "Depósito A"])
     instructions.append(["endereco", "Sim", "Posição física dentro do setor.", "A-03-02"])
@@ -527,4 +567,169 @@ def empresa_movimentacoes(request, empresa_id):
     ).select_related("produto", "operador").order_by("-criado_em")[:200]
     return render(request, "empresa_movimentacoes.html", {
         "empresa": membro.empresa, "membro": membro, "movimentos": movimentos,
+    })
+
+
+
+@login_required
+def empresa_compras(request, empresa_id):
+    membro = require_membership(
+        request, empresa_id,
+        (MembroEmpresa.Papel.ADMIN, MembroEmpresa.Papel.GERENTE),
+    )
+    if request.method == "POST":
+        acao = request.POST.get("acao")
+        try:
+            if acao == "manual":
+                compra = criar_compra_manual(
+                    empresa=membro.empresa, usuario=request.user, dados=request.POST
+                )
+                messages.success(
+                    request,
+                    f"NF {compra.numero_nf}/{compra.serie} salva como rascunho manual. "
+                    "Confira os itens antes de receber.",
+                )
+            elif acao == "importar_xml":
+                arquivo = request.FILES.get("arquivo_xml")
+                if not arquivo:
+                    raise ValueError("Selecione o arquivo XML da NF-e.")
+                compra = importar_nfe(
+                    empresa=membro.empresa, usuario=request.user, documento=arquivo
+                )
+                correspondidos = compra.itens.filter(produto__isnull=False).count()
+                messages.success(
+                    request,
+                    f"NF {compra.numero_nf}/{compra.serie} importada como rascunho. "
+                    f"{correspondidos} de {compra.itens.count()} itens foram associados automaticamente; "
+                    "confira os produtos antes de receber.",
+                )
+            elif acao == "receber":
+                compra = confirmar_recebimento(
+                    compra_id=request.POST.get("compra"),
+                    empresa=membro.empresa,
+                    usuario=request.user,
+                    mapeamentos={
+                        key.removeprefix("produto_"): value
+                        for key, value in request.POST.items()
+                        if key.startswith("produto_") and value
+                    },
+                )
+                messages.success(
+                    request,
+                    f"NF {compra.numero_nf}/{compra.serie} recebida. "
+                    "Estoque e custo médio atualizados.",
+                )
+            else:
+                raise ValueError("Ação de compra inválida.")
+        except Exception as exc:
+            messages.error(request, str(exc))
+        return redirect("empresa-compras", empresa_id=empresa_id)
+
+    compras = CompraEntrada.objects.filter(
+        empresa=membro.empresa
+    ).select_related("fornecedor", "criado_por", "recebido_por").prefetch_related(
+        "itens__produto"
+    )[:100]
+    produtos = Produto.objects.filter(
+        empresa=membro.empresa, ativo=True
+    ).order_by("nome")
+    return render(request, "empresa_compras.html", {
+        "empresa": membro.empresa, "membro": membro,
+        "compras": compras, "produtos": produtos,
+    })
+
+@login_required
+def empresa_clientes(request, empresa_id):
+    membro = require_membership(
+        request, empresa_id, (MembroEmpresa.Papel.ADMIN, MembroEmpresa.Papel.GERENTE)
+    )
+    if request.method == "POST":
+        nome = request.POST.get("nome", "").strip()
+        try:
+            limite = Decimal(request.POST.get("limite_credito", "0"))
+            if not nome or not limite.is_finite() or limite < 0:
+                raise ValueError
+            documento = "".join(ch for ch in request.POST.get("documento", "") if ch.isdigit())[:14]
+            cliente = Cliente.objects.create(
+                empresa=membro.empresa, nome=nome[:180], documento=documento,
+                telefone=request.POST.get("telefone", "")[:30],
+                email=request.POST.get("email", "")[:254],
+                limite_credito=limite,
+            )
+            messages.success(request, f"Cliente {cliente.nome} cadastrado.")
+        except Exception as exc:
+            messages.error(request, f"Não foi possível cadastrar o cliente: {exc}")
+        return redirect("empresa-clientes", empresa_id=empresa_id)
+    clientes = Cliente.objects.filter(empresa=membro.empresa).order_by("nome")
+    return render(request, "empresa_clientes.html", {
+        "empresa": membro.empresa, "membro": membro, "clientes": clientes,
+    })
+
+
+@login_required
+def empresa_contas_receber(request, empresa_id):
+    membro = require_membership(
+        request, empresa_id, (MembroEmpresa.Papel.ADMIN, MembroEmpresa.Papel.GERENTE)
+    )
+    if request.method == "POST":
+        try:
+            with transaction.atomic():
+                conta = ContaReceber.objects.select_for_update().get(
+                    pk=request.POST.get("conta"), empresa=membro.empresa,
+                    estado__in=(ContaReceber.Estado.ABERTA, ContaReceber.Estado.PARCIAL),
+                )
+                valor = Decimal(request.POST.get("valor", "0"))
+                meio = request.POST.get("meio")
+                if not valor.is_finite() or valor <= 0 or valor > conta.saldo or meio not in ("DINHEIRO", "PIX", "CARTAO", "OUTRO"):
+                    raise ValueError("Valor ou forma de pagamento inválidos.")
+                RecebimentoConta.objects.create(
+                    conta=conta, empresa=membro.empresa, operador=request.user,
+                    meio=meio, valor=valor,
+                )
+                conta.saldo -= valor
+                conta.estado = ContaReceber.Estado.QUITADA if conta.saldo == 0 else ContaReceber.Estado.PARCIAL
+                conta.save(update_fields=("saldo", "estado"))
+            messages.success(request, "Recebimento registrado.")
+        except Exception as exc:
+            messages.error(request, f"Não foi possível registrar: {exc}")
+        return redirect("empresa-contas-receber", empresa_id=empresa_id)
+    contas = ContaReceber.objects.filter(
+        empresa=membro.empresa, estado__in=(ContaReceber.Estado.ABERTA, ContaReceber.Estado.PARCIAL)
+    ).select_related("cliente", "venda").order_by("vencimento")
+    return render(request, "empresa_contas_receber.html", {
+        "empresa": membro.empresa, "membro": membro, "contas": contas,
+    })
+
+@login_required
+def empresa_contas_pagar(request, empresa_id):
+    membro = require_membership(
+        request, empresa_id, (MembroEmpresa.Papel.ADMIN, MembroEmpresa.Papel.GERENTE)
+    )
+    if request.method == "POST":
+        try:
+            with transaction.atomic():
+                conta = ContaPagar.objects.select_for_update().get(
+                    pk=request.POST.get("conta"), empresa=membro.empresa,
+                    estado__in=(ContaPagar.Estado.ABERTA, ContaPagar.Estado.PARCIAL),
+                )
+                valor = Decimal(request.POST.get("valor", "0"))
+                meio = request.POST.get("meio")
+                if not valor.is_finite() or valor <= 0 or valor > conta.saldo or meio not in ("DINHEIRO", "PIX", "CARTAO", "OUTRO"):
+                    raise ValueError("Valor ou forma de pagamento inválidos.")
+                PagamentoContaPagar.objects.create(
+                    conta=conta, empresa=membro.empresa, operador=request.user,
+                    meio=meio, valor=valor,
+                )
+                conta.saldo -= valor
+                conta.estado = ContaPagar.Estado.QUITADA if conta.saldo == 0 else ContaPagar.Estado.PARCIAL
+                conta.save(update_fields=("saldo", "estado"))
+            messages.success(request, "Pagamento ao fornecedor registrado.")
+        except Exception as exc:
+            messages.error(request, f"Não foi possível registrar o pagamento: {exc}")
+        return redirect("empresa-contas-pagar", empresa_id=empresa_id)
+    contas = ContaPagar.objects.filter(
+        empresa=membro.empresa, estado__in=(ContaPagar.Estado.ABERTA, ContaPagar.Estado.PARCIAL)
+    ).select_related("fornecedor", "compra").order_by("vencimento")
+    return render(request, "empresa_contas_pagar.html", {
+        "empresa": membro.empresa, "membro": membro, "contas": contas,
     })

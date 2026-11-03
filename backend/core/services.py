@@ -1,12 +1,14 @@
 import uuid
+from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 
 from django.db import transaction
+from django.db.models import Sum
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from .models import (
-    Caixa, InventarioContagem, ItemContagem, ItemVenda, MovimentacaoEstoque, Produto, TokenAutorizacao,
+    Caixa, Cliente, ContaReceber, InventarioContagem, ItemContagem, ItemVenda, MembroEmpresa, MovimentacaoEstoque, Produto, TokenAutorizacao,
     Transacao, Venda,
 )
 
@@ -34,10 +36,31 @@ def registrar_venda(*, empresa, usuario, dados):
 
     linhas = dados.get("itens")
     pagamentos = dados.get("pagamentos")
+    try:
+        credito = Decimal(str(dados.get("credito", "0")))
+        if not credito.is_finite() or credito < 0:
+            raise ValueError
+    except (ValueError, TypeError, InvalidOperation):
+        raise ValidationError({"credito": "Informe um valor de crédito válido."})
     if not isinstance(linhas, list) or not linhas:
         raise ValidationError({"itens": "A venda precisa conter ao menos um produto."})
-    if not isinstance(pagamentos, list) or not pagamentos:
-        raise ValidationError({"pagamentos": "Informe ao menos uma forma de pagamento."})
+    if not isinstance(pagamentos, list) or (not pagamentos and credito == 0):
+        raise ValidationError({"pagamentos": "Informe pagamento ou valor lançado a crédito."})
+
+    cliente = None
+    cliente_id = dados.get("cliente")
+    if cliente_id:
+        try:
+            cliente = Cliente.objects.get(pk=cliente_id, empresa=empresa, ativo=True)
+        except (Cliente.DoesNotExist, ValueError, TypeError):
+            raise ValidationError({"cliente": "Cliente ativo não encontrado nesta empresa."})
+    if credito > 0 and not cliente:
+        raise ValidationError({"cliente": "Selecione um cliente para registrar venda a prazo."})
+
+    try:
+        membro = MembroEmpresa.objects.get(empresa=empresa, usuario=usuario, ativo=True)
+    except MembroEmpresa.DoesNotExist:
+        raise ValidationError({"empresa": "Usuário sem vínculo ativo com esta empresa."})
 
     subtotal = Decimal("0.00")
     itens_calculados = []
@@ -57,12 +80,18 @@ def registrar_venda(*, empresa, usuario, dados):
                     "itens": f"{produto.nome} está em contagem física. Aguarde a conclusão do inventário."
                 })
             quantidade = Decimal(str(linha["quantidade"]))
-            if not quantidade.is_finite() or quantidade <= 0:
+            fator = Decimal(str(produto.fator_conversao))
+            if not quantidade.is_finite() or quantidade <= 0 or not fator.is_finite() or fator <= 0:
                 raise ValueError
+            quantidade_estoque = (quantidade * fator).quantize(Decimal("0.001"))
             desconto = Decimal(str(linha.get("desconto", "0")))
             bruto = (produto.preco_venda * quantidade).quantize(Decimal("0.01"))
             if not desconto.is_finite() or desconto < 0 or desconto > bruto:
                 raise ValueError
+            if desconto > 0 and membro.papel == MembroEmpresa.Papel.CAIXA:
+                raise ValidationError({
+                    "desconto": "Descontos em venda exigem perfil de gerente ou administrador."
+                })
         except Produto.DoesNotExist:
             raise ValidationError({"itens": "Produto inexistente ou indisponível nesta empresa."})
         except (KeyError, ValueError, TypeError, InvalidOperation):
@@ -71,10 +100,10 @@ def registrar_venda(*, empresa, usuario, dados):
         produtos_travados[produto.pk] = produto
         estoque_solicitado[produto.pk] = estoque_solicitado.get(
             produto.pk, Decimal("0")
-        ) + quantidade
+        ) + quantidade_estoque
         total_linha = bruto - desconto
         subtotal += bruto
-        itens_calculados.append((produto, quantidade, desconto, total_linha))
+        itens_calculados.append((produto, quantidade, desconto, total_linha, fator))
 
     for produto_id, quantidade_total in estoque_solicitado.items():
         produto = produtos_travados[produto_id]
@@ -89,26 +118,55 @@ def registrar_venda(*, empresa, usuario, dados):
         try:
             meio = pagamento["meio"]
             valor = Decimal(str(pagamento["valor"]))
-            if meio not in Transacao.Meio.values or not valor.is_finite() or valor <= 0:
+            recebido = Decimal(str(pagamento.get("valor_recebido", valor)))
+            troco = Decimal(str(pagamento.get("troco", "0")))
+            if (
+                meio not in Transacao.Meio.values
+                or not valor.is_finite() or valor <= 0
+                or not recebido.is_finite() or recebido < valor
+                or not troco.is_finite() or troco < 0
+            ):
+                raise ValueError
+            if meio == Transacao.Meio.DINHEIRO:
+                if (recebido - valor).quantize(Decimal("0.01")) != troco.quantize(Decimal("0.01")):
+                    raise ValueError
+            elif recebido != valor or troco != 0:
                 raise ValueError
         except (KeyError, ValueError, TypeError, InvalidOperation):
-            raise ValidationError({"pagamentos": "Forma ou valor de pagamento inválido."})
+            raise ValidationError({"pagamentos": "Forma, valor recebido ou troco inválido."})
         valores_pagamento.append(
-            (meio, valor, str(pagamento.get("referencia_externa", "")))
+            (meio, valor, recebido, troco, str(pagamento.get("referencia_externa", "")))
         )
         soma_pagamentos += valor
-    if soma_pagamentos != total:
-        raise ValidationError({"pagamentos": "A soma dos pagamentos deve ser igual ao total da venda."})
+    if (soma_pagamentos + credito).quantize(Decimal("0.01")) != total:
+        raise ValidationError({"pagamentos": "Pagamentos e crédito precisam corresponder ao total da venda."})
+    if credito > 0:
+        saldo_aberto = ContaReceber.objects.filter(
+            empresa=empresa, cliente=cliente,
+            estado__in=(ContaReceber.Estado.ABERTA, ContaReceber.Estado.PARCIAL),
+        ).aggregate(total=Sum("saldo"))["total"] or Decimal("0")
+        limite = cliente.limite_credito
+        if limite <= 0 or saldo_aberto + credito > limite:
+            raise ValidationError({
+                "credito": f"Crédito recusado. Limite: R$ {limite:.2f}; saldo em aberto: R$ {saldo_aberto:.2f}."
+            })
+        raw_due = str(dados.get("vencimento") or (timezone.localdate() + timedelta(days=30)).isoformat())
+        try:
+            vencimento = timezone.datetime.fromisoformat(raw_due).date()
+        except (ValueError, TypeError):
+            raise ValidationError({"vencimento": "Informe uma data de vencimento válida."})
+        if vencimento < timezone.localdate():
+            raise ValidationError({"vencimento": "A data de vencimento não pode estar no passado."})
 
     venda = Venda.objects.create(
         empresa=empresa, idempotency_key=chave, caixa=caixa, operador=usuario,
-        estado=Venda.Estado.CONCLUIDA, subtotal=subtotal, desconto=desconto_total,
+        cliente=cliente, estado=Venda.Estado.CONCLUIDA, subtotal=subtotal, desconto=desconto_total,
         total=total, observacao=str(dados.get("observacao", ""))[:2000],
     )
-    for produto, quantidade, desconto, total_linha in itens_calculados:
+    for produto, quantidade, desconto, total_linha, fator in itens_calculados:
         ItemVenda.objects.create(
             empresa=empresa, venda=venda, produto=produto, quantidade=quantidade,
-            preco_unitario=produto.preco_venda, desconto=desconto, total=total_linha,
+            preco_unitario=produto.preco_venda, desconto=desconto, fator_conversao=fator, total=total_linha,
         )
     for produto_id, quantidade_total in estoque_solicitado.items():
         produto = produtos_travados[produto_id]
@@ -118,10 +176,17 @@ def registrar_venda(*, empresa, usuario, dados):
             empresa=empresa, produto=produto, tipo=MovimentacaoEstoque.Tipo.VENDA,
             quantidade=-quantidade_total, referencia=f"Venda #{venda.pk}", operador=usuario,
         )
-    for meio, valor, referencia in valores_pagamento:
+    for meio, valor, recebido, troco, referencia in valores_pagamento:
         Transacao.objects.create(
             empresa=empresa, venda=venda, meio=meio, valor=valor,
+            valor_recebido=recebido, troco=troco,
             referencia_externa=referencia[:120],
+        )
+    if credito > 0:
+        ContaReceber.objects.create(
+            empresa=empresa, cliente=cliente, venda=venda,
+            valor_original=credito, saldo=credito, vencimento=vencimento,
+            criado_por=usuario,
         )
     return venda, True
 
@@ -157,12 +222,12 @@ def cancelar_venda(*, empresa, usuario, venda_id, codigo,
         venda.save(update_fields=("estado",))
     itens = venda.itens.select_related("produto").select_for_update()
     for item in itens:
-        item.produto.estoque_atual += item.quantidade
+        item.produto.estoque_atual += (item.quantidade * item.fator_conversao).quantize(Decimal("0.001"))
         item.produto.save(update_fields=("estoque_atual", "atualizado_em"))
         MovimentacaoEstoque.objects.create(
             empresa=empresa, produto=item.produto,
             tipo=MovimentacaoEstoque.Tipo.DEVOLUCAO,
-            quantidade=item.quantidade, referencia=f"Estorno da venda #{venda.pk}",
+            quantidade=(item.quantidade * item.fator_conversao).quantize(Decimal("0.001")), referencia=f"Estorno da venda #{venda.pk}",
             operador=usuario,
         )
     for pagamento in venda.transacoes.filter(tipo=Transacao.Tipo.PAGAMENTO):

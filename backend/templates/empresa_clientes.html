@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Clientes · {{ empresa.nome }}{% endblock %}
+{% block content %}
+<div class="page-head"><div><p class="eyebrow">GESTÃO COMERCIAL</p><h1>Clientes</h1><p>{{ empresa.nome }} · cadastro e limite para vendas a prazo.</p></div><a class="secondary" href="{% url 'empresa-dashboard' empresa.id %}">Voltar</a></div>
+<div class="grid two">
+<section class="panel"><div class="panel-head"><h2>Novo cliente</h2><p>O limite é usado para validar vendas com saldo a receber.</p></div>
+<form method="post" class="form-grid">{% csrf_token %}
+<label>Nome<input name="nome" required maxlength="180"></label>
+<label>CPF/CNPJ<input name="documento" maxlength="18"></label>
+<label>Telefone<input name="telefone" maxlength="30"></label>
+<label>E-mail<input name="email" type="email" maxlength="254"></label>
+<label>Limite de crédito (R$)<input name="limite_credito" type="number" min="0" step="0.01" value="0"></label>
+<button class="primary" type="submit">Cadastrar cliente</button></form></section>
+<section class="panel"><div class="panel-head"><h2>Clientes cadastrados</h2><p>{{ clientes|length }} registros</p></div><div class="table-wrap"><table><thead><tr><th>Cliente</th><th>Documento</th><th>Telefone</th><th>Limite</th></tr></thead><tbody>{% for cliente in clientes %}<tr><td>{{ cliente.nome }}</td><td>{{ cliente.documento|default:"—" }}</td><td>{{ cliente.telefone|default:"—" }}</td><td>R$ {{ cliente.limite_credito|floatformat:2 }}</td></tr>{% empty %}<tr><td colspan="4">Nenhum cliente cadastrado.</td></tr>{% endfor %}</tbody></table></div></section></div>
+{% endblock %}

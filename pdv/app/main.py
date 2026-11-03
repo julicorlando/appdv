@@ -10,8 +10,8 @@ import uuid
 from decimal import Decimal
 from pathlib import Path
 
-from PySide6.QtGui import QDesktopServices, QIcon
-from PySide6.QtCore import QUrl
+from PySide6.QtGui import QDesktopServices, QIcon, QPixmap
+from PySide6.QtCore import QUrl, QTimer, Qt
 import requests
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout,
@@ -35,7 +35,7 @@ class LoginDialog(QDialog):
         self.setWindowIcon(QIcon(asset_path("appdv-icon-256.png")))
         self.api = None
         layout = QFormLayout(self)
-        self.url = QLineEdit(os.getenv("APPDV_API_URL", "http://127.0.0.1:8000"))
+        self.url = QLineEdit(os.getenv("APPDV_API_URL", "https://appdv.axionwebdigital.com.br"))
         self.username = QLineEdit()
         self.password = QLineEdit()
         self.password.setEchoMode(QLineEdit.EchoMode.Password)
@@ -53,9 +53,67 @@ class LoginDialog(QDialog):
         try:
             self.api = ArmazemAPI(self.url.text().strip())
             self.api.login(self.username.text().strip(), self.password.text())
+            self.api.username = self.username.text().strip()
             self.accept()
         except Exception as exc:
             QMessageBox.critical(self, "Não foi possível entrar", str(exc))
+
+
+class AdminPanelDialog(QDialog):
+    def __init__(self, api, empresa_id, company_name, cached_products, parent=None):
+        super().__init__(parent)
+        self.api = api
+        self.empresa_id = str(empresa_id)
+        self.setWindowTitle(f"Administração · {company_name}")
+        self.resize(760, 500)
+        layout = QVBoxLayout(self)
+        heading = QLabel(f"Resumo administrativo — {company_name}")
+        heading.setStyleSheet("font-size:22px;font-weight:800;color:#203879")
+        layout.addWidget(heading)
+        self.summary_label = QLabel("Carregando indicadores…")
+        self.summary_label.setWordWrap(True)
+        self.summary_label.setStyleSheet("font-size:15px;padding:14px;background:#f3f6fa;border-radius:8px")
+        layout.addWidget(self.summary_label)
+        try:
+            data = self.api.resumo_empresa()
+            self.summary_label.setText(
+                f"Produtos ativos: {data['produtos_ativos']}    ·    "
+                f"Estoque baixo: {data['estoque_baixo']}\n"
+                f"Vendas hoje: {data['vendas_hoje']}    ·    "
+                f"Faturamento hoje: R$ {Decimal(str(data['faturamento_hoje'])):.2f}\n"
+                f"Vendas no mês: {data['vendas_mes']}    ·    "
+                f"Faturamento no mês: R$ {Decimal(str(data['faturamento_mes'])):.2f}\n"
+                f"Pedidos confirmados aguardando: {data['pedidos_confirmados']}"
+            )
+        except Exception as exc:
+            low_stock = sum(
+                1 for product in cached_products
+                if Decimal(str(product.get("estoque_atual", 0)))
+                <= Decimal(str(product.get("estoque_minimo", 0)))
+            )
+            self.summary_label.setText(
+                f"Sem conexão para carregar indicadores atualizados.\n"
+                f"Catálogo local: {len(cached_products)} produtos · {low_stock} com estoque baixo.\n{exc}"
+            )
+
+        links = QHBoxLayout()
+        base = self.api.base_url.rstrip("/")
+        pages = [
+            ("Painel Web", f"/empresa/{self.empresa_id}/"),
+            ("Produtos e estoque", f"/empresa/{self.empresa_id}/produtos/"),
+            ("Compras / NF-e", f"/empresa/{self.empresa_id}/compras/"),
+            ("Inventário", f"/empresa/{self.empresa_id}/inventario/"),
+            ("Autorizações", f"/empresa/{self.empresa_id}/autorizacoes/"),
+            ("Vendas", f"/empresa/{self.empresa_id}/vendas/"),
+        ]
+        for label, path in pages:
+            button = QPushButton(label)
+            button.clicked.connect(lambda checked=False, url=base + path: QDesktopServices.openUrl(QUrl(url)))
+            links.addWidget(button)
+        layout.addLayout(links)
+        close = QPushButton("Fechar")
+        close.clicked.connect(self.accept)
+        layout.addWidget(close)
 
 
 class PDVWindow(QMainWindow):
@@ -68,6 +126,9 @@ class PDVWindow(QMainWindow):
         self.cash_id = None
         self.tenant_id = None
         self.company_info = {}
+        self.current_product = None
+        self.company_roles = {}
+        self.tenant_role = "CAIXA"
         self.setWindowTitle("ApPdv — Frente de Caixa")
         self.setWindowIcon(QIcon(asset_path("appdv-icon-256.png")))
         self.resize(1120, 740)
@@ -75,73 +136,185 @@ class PDVWindow(QMainWindow):
         self._select_company()
 
     def _build(self):
+        self.setStyleSheet("""
+            QMainWindow { background: #edf1f5; }
+            QWidget#posRoot { background: #edf1f5; }
+            QLabel { color: #1d2939; }
+            QLabel#brandTitle { color: #ffffff; font-size: 20px; font-weight: 800; }
+            QLabel#operator { color: #152238; font-weight: 700; }
+            QLabel#clock { color: #344054; font-weight: 600; }
+            QLabel#status { color: #14532d; font-weight: 700; }
+            QLabel#productName { background: #203879; color: #ffffff; font-size: 22px; font-weight: 800; padding: 9px 14px; border-radius: 8px; }
+            QLabel#productValue { background: #ffffff; color: #111827; font-size: 16px; font-weight: 700; padding: 7px 9px; border: 1px solid #d0d5dd; border-radius: 6px; }
+            QLabel#total { background: #203879; color: white; font-size: 32px; font-weight: 900; padding: 10px 18px; border-radius: 8px; }
+            QLabel#subtotal { color: #344054; font-size: 15px; font-weight: 700; }
+            QFrame#panel { background: white; border: 1px solid #d6dce5; border-radius: 10px; }
+            QLineEdit, QComboBox { min-height: 28px; padding: 4px 8px; border: 1px solid #c7ced8; border-radius: 6px; background: white; }
+            QPushButton { min-height: 34px; padding: 5px 10px; border: 0; border-radius: 6px; background: #e4eaf3; color: #17305f; font-weight: 700; }
+            QPushButton:hover { background: #d6e0ee; }
+            QPushButton#primary { background: #203879; color: white; min-height: 44px; }
+            QPushButton#primary:hover { background: #172a61; }
+            QTableWidget { background: white; alternate-background-color: #f6f8fb; gridline-color: #e4e7ec; border: 1px solid #d6dce5; border-radius: 7px; }
+            QHeaderView::section { background: #e8edf5; color: #334155; border: 0; padding: 6px; font-weight: 800; }
+        """)
         root = QWidget()
+        root.setObjectName("posRoot")
         layout = QVBoxLayout(root)
+        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(10)
+
         header = QHBoxLayout()
+        brand_icon = QLabel()
+        pixmap = QPixmap(asset_path("appdv-icon-256.png"))
+        if not pixmap.isNull():
+            brand_icon.setPixmap(pixmap.scaled(44, 44, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        brand_title = QLabel("ApPdv · Frente de Caixa")
+        brand_title.setObjectName("brandTitle")
+        brand_box = QWidget()
+        brand_box.setStyleSheet("background:#111b2d; border-radius:9px;")
+        brand_layout = QHBoxLayout(brand_box)
+        brand_layout.setContentsMargins(8, 4, 14, 4)
+        brand_layout.addWidget(brand_icon)
+        brand_layout.addWidget(brand_title)
+        header.addWidget(brand_box)
+
         self.company = QComboBox()
+        self.company.setMinimumWidth(150)
         self.status = QLabel("Conectando")
-        self.refresh = QPushButton("Atualizar catálogo")
-        self.refresh.clicked.connect(self._load_catalog)
-        self.web_orders = QPushButton("Pedidos confirmados")
-        self.web_orders.clicked.connect(self._review_web_orders)
-        self.close_cash = QPushButton("Fechar caixa")
-        self.close_cash.clicked.connect(self._close_cash)
-        self.cancel_sale = QPushButton("Cancelar venda…")
-        self.cancel_sale.clicked.connect(self._cancel_sale)
+        self.status.setObjectName("status")
+        self.operator_label = QLabel(f"Atendente: {getattr(self.api, 'username', '—')}")
+        self.operator_label.setObjectName("operator")
+        self.clock_label = QLabel()
+        self.clock_label.setObjectName("clock")
         header.addWidget(QLabel("Empresa"))
-        header.addWidget(self.company, 1)
+        header.addWidget(self.company)
+        header.addStretch(1)
+        header.addWidget(self.operator_label)
+        header.addWidget(self.clock_label)
         header.addWidget(self.status)
-        header.addWidget(self.refresh)
-        header.addWidget(self.web_orders)
-        header.addWidget(self.close_cash)
-        header.addWidget(self.cancel_sale)
         layout.addLayout(header)
+
+        self.product_banner = QLabel("Leia um código de barras ou pesquise um produto")
+        self.product_banner.setObjectName("productName")
+        layout.addWidget(self.product_banner)
 
         search = QHBoxLayout()
         self.query = QLineEdit()
-        self.query.setPlaceholderText("Leia o código de barras ou pesquise pelo código")
+        self.query.setPlaceholderText("Código, código de barras ou nome do produto")
         self.query.returnPressed.connect(self._add_by_code)
-        add = QPushButton("Adicionar")
+        add = QPushButton("Adicionar ao carrinho")
+        add.setObjectName("primary")
         add.clicked.connect(self._add_by_code)
+        search.addWidget(QLabel("Código / busca"))
         search.addWidget(self.query, 1)
         search.addWidget(add)
         layout.addLayout(search)
 
-        self.catalog = QTableWidget(0, 5)
-        self.catalog.setHorizontalHeaderLabels(
-            ["Código", "Produto", "Setor", "Endereço", "Preço"]
-        )
+        work_area = QHBoxLayout()
+        product_panel = QWidget()
+        product_panel.setObjectName("panel")
+        product_panel.setStyleSheet("background:white; border:1px solid #d6dce5; border-radius:10px;")
+        product_layout = QVBoxLayout(product_panel)
+        product_layout.addWidget(QLabel("Consulta de estoque e preço"))
+        detail_rows = QHBoxLayout()
+        logo = QLabel()
+        logo_pixmap = QPixmap(asset_path("appdv-logo-web.png"))
+        if not logo_pixmap.isNull():
+            logo.setPixmap(logo_pixmap.scaled(170, 90, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        detail_rows.addWidget(logo, 1)
+        facts = QVBoxLayout()
+        self.detail_code = QLabel("Código: —")
+        self.detail_quantity = QLabel("Quantidade no carrinho: —")
+        self.detail_price = QLabel("Preço unitário: —")
+        self.detail_line_total = QLabel("Preço total: —")
+        self.detail_stock = QLabel("Saldo disponível: —")
+        for label in (self.detail_code, self.detail_quantity, self.detail_price, self.detail_line_total, self.detail_stock):
+            label.setObjectName("productValue")
+            facts.addWidget(label)
+        detail_rows.addLayout(facts, 2)
+        product_layout.addLayout(detail_rows)
+
+        self.catalog = QTableWidget(0, 6)
+        self.catalog.setHorizontalHeaderLabels(["Código", "Produto", "Setor", "Endereço", "Preço", "Saldo"])
         self.catalog.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.catalog.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.catalog.cellDoubleClicked.connect(self._add_selected)
-        layout.addWidget(self.catalog, 3)
+        product_layout.addWidget(self.catalog, 1)
+        work_area.addWidget(product_panel, 5)
 
-        self.cart_table = QTableWidget(0, 4)
-        self.cart_table.setHorizontalHeaderLabels(["Produto", "Qtd.", "Preço", "Total"])
+        cart_panel = QWidget()
+        cart_panel.setObjectName("panel")
+        cart_panel.setStyleSheet("background:white; border:1px solid #d6dce5; border-radius:10px;")
+        cart_layout = QVBoxLayout(cart_panel)
+        cart_layout.addWidget(QLabel("Itens da venda"))
+        self.cart_table = QTableWidget(0, 5)
+        self.cart_table.setHorizontalHeaderLabels(["Produto", "Qtd.", "Preço", "Desconto", "Total"])
         self.cart_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        layout.addWidget(self.cart_table, 2)
+        self.cart_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        cart_layout.addWidget(self.cart_table, 1)
+        cart_actions = QHBoxLayout()
+        self.edit_cart_item = QPushButton("Quantidade")
+        self.edit_cart_item.clicked.connect(self._edit_cart_item)
+        self.remove_cart_item = QPushButton("Remover")
+        self.remove_cart_item.clicked.connect(self._remove_cart_item)
+        self.discount_cart_item = QPushButton("Desconto")
+        self.discount_cart_item.clicked.connect(self._discount_cart_item)
+        self.discount_cart_item.setEnabled(False)
+        self.hold_cart = QPushButton("Suspender")
+        self.hold_cart.clicked.connect(self._suspend_sale)
+        self.resume_cart = QPushButton("Retomar")
+        self.resume_cart.clicked.connect(self._resume_sale)
+        for button in (self.edit_cart_item, self.remove_cart_item, self.discount_cart_item, self.hold_cart, self.resume_cart):
+            cart_actions.addWidget(button)
+        cart_layout.addLayout(cart_actions)
+        work_area.addWidget(cart_panel, 7)
+        layout.addLayout(work_area, 1)
 
-        footer = QHBoxLayout()
-        self.total = QLabel("Total: R$ 0,00")
-        self.total.setStyleSheet("font-size: 24px; font-weight: 800")
-        self.payment = QComboBox()
-        self.payment.addItems(["DINHEIRO", "PIX", "CARTAO"])
-        self.pay = QPushButton("Finalizar venda")
+        totals = QHBoxLayout()
+        self.subtotal = QLabel("Subtotal: R$ 0,00")
+        self.subtotal.setObjectName("subtotal")
+        self.total = QLabel("TOTAL  R$ 0,00")
+        self.total.setObjectName("total")
+        totals.addWidget(self.subtotal, 1)
+        totals.addWidget(self.total, 1)
+        layout.addLayout(totals)
+
+        actions = QHBoxLayout()
+        self.pay = QPushButton("F2 · Finalizar venda")
+        self.pay.setObjectName("primary")
         self.pay.clicked.connect(self._checkout)
+        self.quote = QPushButton("F3 · Fazer / imprimir orçamento")
+        self.quote.clicked.connect(self._print_quote)
         self.web_order = QPushButton("Pedido via WhatsApp")
         self.web_order.clicked.connect(self._create_web_order)
-        footer.addWidget(self.total, 1)
-        footer.addWidget(QLabel("Pagamento"))
-        footer.addWidget(self.payment)
-        footer.addWidget(self.pay)
-        footer.addWidget(self.web_order)
-        layout.addLayout(footer)
+        self.web_orders = QPushButton("Pedidos confirmados")
+        self.web_orders.clicked.connect(self._review_web_orders)
+        self.cash_move = QPushButton("Sangria / suprimento")
+        self.cash_move.clicked.connect(self._cash_movement)
+        self.close_cash = QPushButton("Fechar caixa")
+        self.close_cash.clicked.connect(self._close_cash)
+        self.cancel_sale = QPushButton("Cancelar venda")
+        self.cancel_sale.clicked.connect(self._cancel_sale)
+        self.admin_button = QPushButton("Área administrativa")
+        self.admin_button.clicked.connect(self._open_admin_panel)
+        self.admin_button.setVisible(False)
+        for button in (self.pay, self.quote, self.web_order, self.web_orders, self.cash_move, self.close_cash, self.cancel_sale, self.admin_button):
+            actions.addWidget(button)
+        layout.addLayout(actions)
+
         self.setCentralWidget(root)
+        self._clock_timer = QTimer(self)
+        self._clock_timer.timeout.connect(self._update_clock)
+        self._clock_timer.start(1000)
+        self._update_clock()
 
     def _select_company(self):
         try:
             companies = self.api.minhas_empresas()
             for company in companies:
                 self.company.addItem(company["nome"], company["id"])
+                self.company_roles[str(company["id"])] = company.get("papel", "CAIXA")
             self.company.currentIndexChanged.connect(self._company_changed)
             if companies:
                 self._company_changed(0)
@@ -156,6 +329,9 @@ class PDVWindow(QMainWindow):
         if index < 0:
             return
         self.tenant_id = str(self.company.currentData())
+        self.tenant_role = self.company_roles.get(self.tenant_id, "CAIXA")
+        self.discount_cart_item.setEnabled(self.tenant_role in ("ADMIN", "GERENTE"))
+        self.admin_button.setVisible(self.tenant_role in ("ADMIN", "GERENTE"))
         self.api.selecionar_empresa(self.tenant_id)
         try:
             self.company_info = self.api.empresa_info()
@@ -198,6 +374,7 @@ class PDVWindow(QMainWindow):
                 product.get("codigo", ""), product.get("nome", ""),
                 product.get("setor", ""), product.get("endereco", ""),
                 f"R$ {Decimal(str(product.get('preco_venda', 0))):.2f}",
+                f"{product.get('estoque_atual', '0')} {product.get('unidade_estoque') or product.get('unidade', '')}",
             ]
             for col, value in enumerate(values):
                 self.catalog.setItem(row, col, QTableWidgetItem(str(value)))
@@ -207,16 +384,33 @@ class PDVWindow(QMainWindow):
         query = self.query.text().strip().lower()
         if not query:
             return
-        product = next(
+        exact = next(
             (p for p in self.products if query in (
-                str(p.get("codigo", "")).lower(),
-                str(p.get("codigo_barras", "")).lower(),
+                str(p.get("codigo", "")).strip().lower(),
+                str(p.get("codigo_barras", "")).strip().lower(),
             )),
             None,
         )
-        if product:
-            self._add_product(product)
+        matches = [exact] if exact else [
+            p for p in self.products if query in str(p.get("nome", "")).lower()
+            or query in str(p.get("codigo", "")).lower()
+        ]
+        if len(matches) == 1:
+            self._add_product(matches[0])
             self.query.clear()
+        elif matches:
+            choices = [
+                f"{p.get('codigo','')} · {p.get('nome','')} · "
+                f"R$ {Decimal(str(p.get('preco_venda',0))):.2f} · saldo {p.get('estoque_atual',0)}"
+                for p in matches[:100]
+            ]
+            selected, accepted = QInputDialog.getItem(
+                self, "Selecionar produto", "Foram encontrados vários resultados:",
+                choices, 0, False,
+            )
+            if accepted:
+                self._add_product(matches[choices.index(selected)])
+                self.query.clear()
         else:
             QMessageBox.information(
                 self, "Produto não localizado", "Atualize o catálogo ou confira o código."
@@ -235,7 +429,137 @@ class PDVWindow(QMainWindow):
                 self, "Estoque", "A quantidade excede o saldo disponível no último catálogo."
             )
             return
-        self.cart[product_id] = {"produto": product, "quantidade": quantity}
+        prior_discount = self.cart.get(product_id, {}).get("desconto", Decimal("0"))
+        self.cart[product_id] = {
+            "produto": product, "quantidade": quantity, "desconto": prior_discount,
+        }
+        self._show_product(product)
+        self._render_cart()
+
+    def _suspend_sale(self):
+        if not self.cart or not self.tenant_id:
+            QMessageBox.information(self, "Suspender venda", "O carrinho está vazio.")
+            return
+        label, accepted = QInputDialog.getText(
+            self, "Suspender venda", "Identificação para localizar depois:",
+            text=f"Venda {datetime.now().strftime('%H:%M')}",
+        )
+        if not accepted:
+            return
+        payload = {
+            "items": [
+                {
+                    "produto": product_id, "quantidade": str(item["quantidade"]),
+                    "desconto": str(item.get("desconto", Decimal("0"))),
+                }
+                for product_id, item in self.cart.items()
+            ]
+        }
+        self.store.hold_sale(self.tenant_id, label.strip() or "Venda suspensa", payload)
+        self.cart.clear()
+        self._render_cart()
+        QMessageBox.information(self, "Venda suspensa", "O carrinho foi salvo neste computador.")
+
+    def _resume_sale(self):
+        if not self.tenant_id:
+            return
+        held = self.store.held_sales(self.tenant_id)
+        if not held:
+            QMessageBox.information(self, "Retomar venda", "Não há vendas suspensas neste computador.")
+            return
+        choices = [f"{row[1]} · {row[3]}" for row in held]
+        selected, accepted = QInputDialog.getItem(
+            self, "Retomar venda", "Selecione um carrinho suspenso:", choices, 0, False
+        )
+        if not accepted:
+            return
+        sale_id, _label, raw_payload, _created = held[choices.index(selected)]
+        payload = json.loads(raw_payload)
+        product_map = {int(product["id"]): product for product in self.products}
+        restored = {}
+        for line in payload.get("items", []):
+            product_id = int(line["produto"])
+            product = product_map.get(product_id)
+            if not product:
+                QMessageBox.warning(
+                    self, "Produto indisponível",
+                    f"O produto {product_id} não está no catálogo em cache. Atualize o catálogo.",
+                )
+                return
+            restored[product_id] = {
+                "produto": product,
+                "quantidade": Decimal(str(line["quantidade"])),
+                "desconto": Decimal(str(line.get("desconto", "0"))),
+            }
+        if self.cart:
+            decision = QMessageBox.question(
+                self, "Carrinho em uso",
+                "Deseja suspender o carrinho atual antes de retomar o selecionado?",
+            )
+            if decision != QMessageBox.StandardButton.Yes:
+                return
+            self._suspend_sale()
+            if self.cart:
+                return
+        self.cart = restored
+        self.store.remove_held_sale(sale_id, self.tenant_id)
+        self._render_cart()
+
+    def _edit_cart_item(self):
+        row = self.cart_table.currentRow()
+        entries = list(self.cart.items())
+        if row < 0 or row >= len(entries):
+            QMessageBox.information(self, "Carrinho", "Selecione um item do carrinho.")
+            return
+        product_id, item = entries[row]
+        product = item["produto"]
+        available = Decimal(str(product.get("estoque_atual", "0")))
+        quantity, accepted = QInputDialog.getDouble(
+            self, "Alterar quantidade", product["nome"],
+            float(item["quantidade"]), 0.001, float(available), 3,
+        )
+        if not accepted:
+            return
+        if Decimal(str(quantity)) > available:
+            QMessageBox.warning(self, "Estoque", "A quantidade excede o saldo disponível.")
+            return
+        new_quantity = Decimal(str(quantity)).quantize(Decimal("0.001"))
+        gross = (Decimal(str(product["preco_venda"])) * new_quantity).quantize(Decimal("0.01"))
+        self.cart[product_id]["quantidade"] = new_quantity
+        if self.cart[product_id].get("desconto", Decimal("0")) > gross:
+            self.cart[product_id]["desconto"] = Decimal("0")
+        self._show_product(product)
+        self._render_cart()
+
+    def _discount_cart_item(self):
+        if self.tenant_role not in ("ADMIN", "GERENTE"):
+            QMessageBox.warning(self, "Desconto", "Descontos exigem perfil de gerente ou administrador.")
+            return
+        row = self.cart_table.currentRow()
+        entries = list(self.cart.items())
+        if row < 0 or row >= len(entries):
+            QMessageBox.information(self, "Desconto", "Selecione um item do carrinho.")
+            return
+        product_id, item = entries[row]
+        product = item["produto"]
+        gross = (Decimal(str(product["preco_venda"])) * item["quantidade"]).quantize(Decimal("0.01"))
+        discount, accepted = QInputDialog.getDouble(
+            self, "Desconto no item", "Desconto em reais (R$):",
+            float(item.get("desconto", Decimal("0"))), 0, float(gross), 2,
+        )
+        if not accepted:
+            return
+        self.cart[product_id]["desconto"] = Decimal(str(discount)).quantize(Decimal("0.01"))
+        self._show_product(product)
+        self._render_cart()
+
+    def _remove_cart_item(self):
+        row = self.cart_table.currentRow()
+        entries = list(self.cart)
+        if row < 0 or row >= len(entries):
+            QMessageBox.information(self, "Carrinho", "Selecione um item do carrinho.")
+            return
+        self.cart.pop(entries[row], None)
         self._render_cart()
 
     def _render_cart(self):
@@ -245,15 +569,162 @@ class PDVWindow(QMainWindow):
         for row, item in enumerate(rows):
             product, quantity = item["produto"], item["quantidade"]
             price = Decimal(str(product["preco_venda"]))
-            line_total = quantity * price
+            discount = Decimal(str(item.get("desconto", "0")))
+            line_total = (quantity * price - discount).quantize(Decimal("0.01"))
             total += line_total
             values = [
                 product["nome"], str(quantity), f"R$ {price:.2f}",
-                f"R$ {line_total:.2f}",
+                f"R$ {discount:.2f}", f"R$ {line_total:.2f}",
             ]
             for col, value in enumerate(values):
                 self.cart_table.setItem(row, col, QTableWidgetItem(str(value)))
         self.total.setText(f"Total: R$ {total:.2f}")
+
+    def _update_clock(self):
+        self.clock_label.setText(datetime.now().strftime("%H:%M:%S  |  %d/%m/%Y"))
+
+    def _show_product(self, product):
+        self.current_product = product
+        product_id = int(product["id"])
+        cart_item = self.cart.get(product_id, {})
+        quantity = cart_item.get("quantidade", Decimal("0"))
+        discount = cart_item.get("desconto", Decimal("0"))
+        price = Decimal(str(product.get("preco_venda", "0")))
+        line_total = (quantity * price - discount).quantize(Decimal("0.01"))
+        self.product_banner.setText(str(product.get("nome", "Produto")))
+        self.detail_code.setText(f"Código: {product.get('codigo', '—')} · EAN: {product.get('codigo_barras', '—')}")
+        self.detail_quantity.setText(f"Quantidade no carrinho: {quantity if quantity else '—'} {product.get('unidade', '')}")
+        self.detail_price.setText(f"Preço unitário: R$ {price:.2f}")
+        self.detail_line_total.setText(f"Preço total: R$ {line_total:.2f}" if quantity else "Preço total: —")
+        stock_unit = product.get("unidade_estoque") or product.get("unidade", "")
+        factor = Decimal(str(product.get("fator_conversao", "1")))
+        conversion = f" · 1 {product.get('unidade', '')} = {factor.normalize():g} {stock_unit}" if factor != 1 or stock_unit != product.get("unidade", "") else ""
+        self.detail_stock.setText(
+            f"Saldo disponível: {product.get('estoque_atual', 0)} {stock_unit}{conversion}  ·  "
+            f"{product.get('setor', 'Sem setor')} / {product.get('endereco', 'Sem endereço')}"
+        )
+
+    def _open_admin_panel(self):
+        if self.tenant_role not in ("ADMIN", "GERENTE"):
+            QMessageBox.warning(self, "Acesso negado", "A área administrativa exige perfil autorizado.")
+            return
+        dialog = AdminPanelDialog(
+            self.api, self.tenant_id, self.company.currentText(), self.products, self
+        )
+        dialog.exec()
+
+    def _print_quote(self):
+        if not self.cart:
+            QMessageBox.information(self, "Orçamento", "Adicione produtos antes de gerar o orçamento.")
+            return
+        customer, accepted = QInputDialog.getText(
+            self, "Orçamento", "Nome do cliente (opcional):"
+        )
+        if not accepted:
+            return
+        validity, accepted = QInputDialog.getInt(
+            self, "Validade do orçamento", "Validade em dias:",
+            7, 1, 90, 1,
+        )
+        if not accepted:
+            return
+        quote_id = uuid.uuid4().hex[:10].upper()
+        path = Path(self.store.path).parent / "orcamentos"
+        path.mkdir(parents=True, exist_ok=True)
+        file_path = path / f"orcamento-{quote_id}.html"
+        rows = []
+        subtotal = Decimal("0.00")
+        discounts = Decimal("0.00")
+        for item in self.cart.values():
+            product = item["produto"]
+            quantity = item["quantidade"]
+            price = Decimal(str(product["preco_venda"]))
+            discount = Decimal(str(item.get("desconto", "0")))
+            line_total = (quantity * price - discount).quantize(Decimal("0.01"))
+            subtotal += (quantity * price).quantize(Decimal("0.01"))
+            discounts += discount
+            rows.append(
+                f"<tr><td>{html.escape(str(product.get('codigo','')))} · "
+                f"{html.escape(str(product.get('nome','')))}</td>"
+                f"<td>{quantity} {html.escape(str(product.get('unidade','')))}</td>"
+                f"<td>R$ {price:.2f}</td><td>R$ {discount:.2f}</td>"
+                f"<td>R$ {line_total:.2f}</td></tr>"
+            )
+        total = subtotal - discounts
+        company = html.escape(self.company.currentText())
+        customer_html = f"<p><b>Cliente:</b> {html.escape(customer.strip())}</p>" if customer.strip() else ""
+        logo_path = Path(asset_path("appdv-logo-web.png"))
+        logo_html = f"<img src='{logo_path.as_uri()}' alt='ApPdv' style='max-width:220px;max-height:70px'>" if logo_path.exists() else "<b>ApPdv</b>"
+        quote = f"""<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Orçamento {quote_id}</title>
+<style>body{{font:14px Arial,sans-serif;margin:28px;color:#17202a}}header{{display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #203879;padding-bottom:14px}}h1{{color:#203879}}table{{width:100%;border-collapse:collapse;margin-top:22px}}th,td{{padding:10px;border-bottom:1px solid #d9dee8;text-align:left}}th{{background:#edf1f7}}.summary{{text-align:right;font-size:17px;line-height:1.8;margin-top:18px}}.note{{background:#f4f6f9;padding:12px;border-radius:8px;margin-top:20px}}button{{padding:12px 20px;background:#203879;color:white;border:0;border-radius:6px;font-weight:bold}}@media print{{button{{display:none}}body{{margin:0}}}}</style></head>
+<body><header><div>{logo_html}<p>{company}</p></div><div><h1>ORÇAMENTO</h1><b>Nº {quote_id}</b><br>{datetime.now().strftime('%d/%m/%Y %H:%M')}</div></header>
+{customer_html}<p>Válido por {validity} dias · Vencimento: {(datetime.now() + __import__('datetime').timedelta(days=validity)).strftime('%d/%m/%Y')}</p>
+<table><thead><tr><th>Produto</th><th>Quantidade</th><th>Preço unitário</th><th>Desconto</th><th>Total</th></tr></thead><tbody>{"".join(rows)}</tbody></table>
+<div class="summary">Subtotal: R$ {subtotal:.2f}<br>Descontos: R$ {discounts:.2f}<br><strong>TOTAL: R$ {total:.2f}</strong></div>
+<div class="note">Este documento é um orçamento e não representa venda, reserva ou baixa de estoque. Preços e disponibilidade deverão ser confirmados no momento da compra.</div>
+<p style="text-align:center"><button onclick="window.print()">Imprimir orçamento</button></p></body></html>"""
+        file_path.write_text(quote, encoding="utf-8")
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(file_path)))
+        QMessageBox.information(self, "Orçamento gerado", f"Orçamento {quote_id} salvo em:\n{file_path}")
+
+    def _collect_payments(self, total):
+        """Collect one or more payment methods and calculate cash change."""
+        methods = ["DINHEIRO", "PIX", "CARTAO", "OUTRO"]
+        labels = ["Dinheiro", "PIX", "Cartão", "Outro"]
+        remaining = total.quantize(Decimal("0.01"))
+        payments = []
+        while remaining > 0:
+            if len(payments) >= 10:
+                QMessageBox.warning(self, "Pagamento", "Limite de 10 formas de pagamento por venda.")
+                return None
+            method, accepted = QInputDialog.getItem(
+                self, "Forma de pagamento",
+                f"Falta pagar R$ {remaining:.2f}. Selecione a próxima forma:",
+                labels, 0, False,
+            )
+            if not accepted:
+                return None
+            payment_method = methods[labels.index(method)]
+            if payment_method == "DINHEIRO":
+                received_value, accepted = QInputDialog.getDouble(
+                    self, "Dinheiro recebido",
+                    f"Valor recebido em dinheiro (R$). Falta pagar R$ {remaining:.2f}:",
+                    float(remaining), 0.01, 10000000.00, 2,
+                )
+                if not accepted:
+                    return None
+                received = Decimal(str(received_value)).quantize(Decimal("0.01"))
+                applied = min(received, remaining)
+                change = max(received - remaining, Decimal("0")).quantize(Decimal("0.01"))
+            else:
+                applied_value, accepted = QInputDialog.getDouble(
+                    self, "Valor do pagamento",
+                    f"Valor pago em {method} (R$). Falta pagar R$ {remaining:.2f}:",
+                    float(remaining), 0.01, float(remaining), 2,
+                )
+                if not accepted:
+                    return None
+                applied = Decimal(str(applied_value)).quantize(Decimal("0.01"))
+                received = applied
+                change = Decimal("0.00")
+            if applied <= 0:
+                QMessageBox.warning(self, "Pagamento", "O valor pago precisa ser maior que zero.")
+                continue
+            payments.append({
+                "meio": payment_method,
+                "valor": str(applied),
+                "valor_recebido": str(received),
+                "troco": str(change),
+            })
+            remaining = (remaining - applied).quantize(Decimal("0.01"))
+            if remaining > 0:
+                result = QMessageBox.question(
+                    self, "Pagamento parcial",
+                    f"Restam R$ {remaining:.2f}. Adicionar outra forma de pagamento?",
+                )
+                if result != QMessageBox.StandardButton.Yes:
+                    return None
+        return payments
 
     def _checkout(self):
         if not self.cash_id:
@@ -263,21 +734,52 @@ class PDVWindow(QMainWindow):
             return
         total = sum(
             (Decimal(str(item["produto"]["preco_venda"])) * item["quantidade"]
+             - Decimal(str(item.get("desconto", "0")))
              for item in self.cart.values()),
             Decimal("0"),
         ).quantize(Decimal("0.01"))
+        credit = Decimal("0.00")
+        customer_id = None
+        credit_value, ok = QInputDialog.getDouble(
+            self, "Venda a prazo", "Valor a lançar em conta do cliente (R$):",
+            0.00, 0.00, float(total), 2,
+        )
+        if not ok:
+            return
+        credit = Decimal(str(credit_value)).quantize(Decimal("0.01"))
+        if credit > 0:
+            try:
+                customers = self.api.clientes()
+            except Exception as exc:
+                QMessageBox.critical(self, "Venda a prazo", f"É necessário estar conectado para consultar clientes: {exc}")
+                return
+            if not customers:
+                QMessageBox.warning(self, "Venda a prazo", "Cadastre o cliente no painel web antes de lançar crédito.")
+                return
+            choices = [f"{item['nome']} · limite R$ {Decimal(str(item['limite_credito'])):.2f}" for item in customers]
+            selected, accepted = QInputDialog.getItem(self, "Venda a prazo", "Cliente:", choices, 0, False)
+            if not accepted:
+                return
+            customer_id = customers[choices.index(selected)]["id"]
+        payments = self._collect_payments(total - credit)
+        if payments is None:
+            return
+        self.last_payments = payments
         key = str(uuid.uuid4())
         payload = {
             "idempotency_key": key,
             "caixa": self.cash_id,
             "observacao": "",
+            "cliente": customer_id,
+            "credito": str(credit),
             "itens": [
-                {"produto": product_id, "quantidade": str(item["quantidade"]), "desconto": "0"}
+                {
+                    "produto": product_id, "quantidade": str(item["quantidade"]),
+                    "desconto": str(item.get("desconto", Decimal("0"))),
+                }
                 for product_id, item in self.cart.items()
             ],
-            "pagamentos": [
-                {"meio": self.payment.currentText(), "valor": str(total)}
-            ],
+            "pagamentos": payments,
         }
         try:
             response = self.api.registrar_venda(payload)
@@ -309,6 +811,12 @@ class PDVWindow(QMainWindow):
         if not self.cart:
             QMessageBox.information(self, "Carrinho vazio", "Adicione produtos antes de criar o pedido.")
             return
+        if any(item.get("desconto", Decimal("0")) > 0 for item in self.cart.values()):
+            QMessageBox.warning(
+                self, "Desconto",
+                "Pedidos enviados pelo WhatsApp ainda não aceitam descontos. Remova os descontos antes de criar o pedido.",
+            )
+            return
         nome, ok = QInputDialog.getText(self, "Pedido via WhatsApp", "Nome do cliente:")
         if not ok or not nome.strip():
             return
@@ -321,12 +829,24 @@ class PDVWindow(QMainWindow):
             return
         if len(telefone) in (10, 11):
             telefone = "55" + telefone
+        endereco_entrega, ok = QInputDialog.getText(
+            self, "Entrega", "Endereço de entrega (opcional):"
+        )
+        if not ok:
+            return
+        entrega_data, ok = QInputDialog.getText(
+            self, "Entrega", "Data desejada (AAAA-MM-DD; opcional):"
+        )
+        if not ok:
+            return
         itens = [
             {"produto": product_id, "quantidade": str(item["quantidade"])}
             for product_id, item in self.cart.items()
         ]
         try:
-            pedido = self.api.criar_pedido_web(nome.strip(), telefone, itens)
+            pedido = self.api.criar_pedido_web(
+                nome.strip(), telefone, itens, endereco_entrega.strip(), entrega_data.strip()
+            )
             total = Decimal(str(pedido["total"]))
             resumo = "\n".join(
                 f"• {item['quantidade']} x {item['produto']['nome']}"
@@ -369,17 +889,27 @@ class PDVWindow(QMainWindow):
             product = item["produto"]
             quantity = item["quantidade"]
             price = Decimal(str(product["preco_venda"]))
-            line_total = (quantity * price).quantize(Decimal("0.01"))
+            discount = Decimal(str(item.get("desconto", "0")))
+            line_total = (quantity * price - discount).quantize(Decimal("0.01"))
             total += line_total
             rows.append(
                 f"<tr><td><b>{html.escape(str(product['codigo']))}</b> "
                 f"{html.escape(str(product['nome']))}<br>"
-                f"<small>{quantity} x R$ {price:.2f}</small></td>"
+                f"<small>{quantity} x R$ {price:.2f} · desconto R$ {discount:.2f}</small></td>"
                 f"<td class='right'>R$ {line_total:.2f}</td></tr>"
             )
         system_img = f"<img class='system-logo' src='{system_logo}' alt='ApPdv'>" if system_logo else ""
         company_img = f"<img class='company-logo' src='{company_logo}' alt='Logo {company_name}'>" if company_logo else ""
         tax_id = f"<div>{cnpj}</div>" if cnpj else ""
+        payment_labels = {
+            "DINHEIRO": "Dinheiro", "PIX": "PIX",
+            "CARTAO": "Cartão", "OUTRO": "Outro",
+        }
+        payment_text = ", ".join(
+            f"{payment_labels.get(p['meio'], p['meio'])}: R$ {Decimal(str(p['valor'])):.2f}"
+            for p in self.last_payments
+        )
+        change = sum((Decimal(str(p.get("troco", "0"))) for p in self.last_payments), Decimal("0"))
         return f"""<!doctype html>
 <html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>Cupom interno #{sale_id}</title>
@@ -406,7 +936,8 @@ button {{ width:100%; padding:10px; margin:12px 0; }}
 <div>Venda #{sale_id}</div><div>{datetime.now().strftime('%d/%m/%Y %H:%M:%S')}</div></header>
 <hr class="rule"><table><tbody>{"".join(rows)}</tbody></table><hr class="rule">
 <p class="total">TOTAL: R$ {total:.2f}</p>
-<p>Pagamento: {html.escape(self.payment.currentText())}</p>
+<p>Pagamento: {html.escape(payment_text or "—")}</p>
+<p>Troco: R$ {change:.2f}</p>
 <div class="footer">Documento não fiscal. Válido apenas como comprovante interno.</div>
 <button onclick="window.print()">Imprimir comprovante</button>
 </body></html>"""
@@ -469,22 +1000,29 @@ button {{ width:100%; padding:10px; margin:12px 0; }}
             for item in pedido["itens"]
         )
         total = Decimal(str(pedido["total"]))
+        if not self.cash_id:
+            QMessageBox.warning(self, "Caixa fechado", "Abra o caixa para finalizar este pedido.")
+            return
+        payments = self._collect_payments(total)
+        if payments is None:
+            return
+        payment_summary = ", ".join(
+            f"{payment['meio']}: R$ {Decimal(str(payment['valor'])):.2f}"
+            for payment in payments
+        )
         confirm = QMessageBox.question(
             self, f"Finalizar pedido #{pedido['id']}",
             f"Cliente: {pedido['cliente_nome']}\n\n{resumo}\n\n"
-            f"Total: R$ {total:.2f}\nPagamento: {self.payment.currentText()}\n\n"
+            f"Total: R$ {total:.2f}\nPagamentos: {payment_summary}\n\n"
             "Confirmar recebimento e registrar a venda? O estoque será baixado.",
         )
         if confirm != QMessageBox.StandardButton.Yes:
             return
-        if not self.cash_id:
-            QMessageBox.warning(self, "Caixa fechado", "Abra o caixa para finalizar este pedido.")
-            return
         try:
             result = self.api.finalizar_pedido_web(
-                pedido["id"], self.cash_id,
-                [{"meio": self.payment.currentText(), "valor": str(total)}],
+                pedido["id"], self.cash_id, payments,
             )
+            self.last_payments = payments
             QMessageBox.information(
                 self, "Venda concluída",
                 f"Pedido #{pedido['id']} finalizado como venda #{result['venda_id']}."
@@ -493,18 +1031,65 @@ button {{ width:100%; padding:10px; margin:12px 0; }}
         except Exception as exc:
             QMessageBox.critical(self, "Não foi possível finalizar", str(exc))
 
-    def _close_cash(self):
+    def _cash_movement(self):
         if not self.cash_id:
+            QMessageBox.warning(self, "Caixa", "Abra o caixa antes de registrar uma movimentação.")
             return
-        amount, accepted = QInputDialog.getDouble(
-            self, "Fechamento do caixa", "Valor contado em dinheiro (R$):",
-            0.00, 0.00, 10000000.00, 2,
+        kind, accepted = QInputDialog.getItem(
+            self, "Movimentação do caixa", "Tipo:", ["Sangria", "Suprimento"], 0, False
         )
         if not accepted:
             return
+        amount, accepted = QInputDialog.getDouble(
+            self, kind, "Valor (R$):", 0.00, 0.01, 10000000.00, 2,
+        )
+        if not accepted:
+            return
+        reason, accepted = QInputDialog.getText(
+            self, kind, "Motivo obrigatório:"
+        )
+        if not accepted or not reason.strip():
+            return
         try:
-            self.api.fechar_caixa(self.cash_id, amount)
-            QMessageBox.information(self, "Caixa fechado", "O caixa foi encerrado no servidor.")
+            self.api.movimentar_caixa(
+                self.cash_id, "SANGRIA" if kind == "Sangria" else "SUPRIMENTO",
+                amount, reason.strip(),
+            )
+            QMessageBox.information(self, "Caixa", f"{kind} registrada e auditada.")
+        except Exception as exc:
+            QMessageBox.critical(self, "Falha na movimentação", str(exc))
+
+    def _close_cash(self):
+        if not self.cash_id:
+            return
+        try:
+            summary = self.api.resumo_caixa(self.cash_id)
+            expected = Decimal(str(summary["esperado_dinheiro"]))
+        except Exception as exc:
+            QMessageBox.critical(self, "Fechamento do caixa", f"Não foi possível consultar o resumo: {exc}")
+            return
+        amount, accepted = QInputDialog.getDouble(
+            self, "Fechamento do caixa",
+            f"Dinheiro esperado: R$ {expected:.2f}\nInforme o valor contado (R$):",
+            float(expected), 0.00, 10000000.00, 2,
+        )
+        if not accepted:
+            return
+        difference = Decimal(str(amount)) - expected
+        confirm = QMessageBox.question(
+            self, "Confirmar fechamento",
+            f"Esperado: R$ {expected:.2f}\nContado: R$ {Decimal(str(amount)):.2f}\n"
+            f"Diferença: R$ {difference:.2f}\n\nFechar este caixa?",
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            result = self.api.fechar_caixa(self.cash_id, amount)
+            difference = Decimal(str(result.get("resumo", {}).get("diferenca_fechamento", difference)))
+            QMessageBox.information(
+                self, "Caixa fechado",
+                f"Caixa encerrado. Diferença apurada: R$ {difference:.2f}.",
+            )
             self.cash_id = None
             self.status.setText("Caixa fechado")
         except Exception as exc:

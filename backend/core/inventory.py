@@ -15,7 +15,7 @@ from .models import (
 
 
 REQUIRED_COLUMNS = (
-    "codigo", "nome", "categoria", "unidade", "preco_venda",
+    "codigo", "nome", "categoria", "unidade", "unidade_estoque", "fator_conversao", "preco_venda",
     "estoque_atual", "estoque_minimo", "setor", "endereco", "codigo_barras",
 )
 
@@ -64,10 +64,15 @@ def importar_planilha(*, empresa, usuario, arquivo):
         if codigo in seen:
             raise ValidationError({"planilha": f"Linha {row_number}: código duplicado ({codigo})."})
         seen.add(codigo)
+        factor = _decimal(data.get("fator_conversao") or 1, "fator_conversao", row_number)
+        if factor <= 0:
+            raise ValidationError({"planilha": f"Linha {row_number}: fator_conversao deve ser maior que zero."})
         rows.append({
             "codigo": codigo, "nome": nome,
             "categoria": str(data.get("categoria") or "Geral").strip()[:120] or "Geral",
             "unidade": str(data.get("unidade") or "UN").strip()[:12],
+            "unidade_estoque": str(data.get("unidade_estoque") or "").strip()[:12],
+            "fator_conversao": factor,
             "preco_venda": _decimal(data.get("preco_venda"), "preco_venda", row_number),
             "estoque_atual": _decimal(data.get("estoque_atual"), "estoque_atual", row_number),
             "estoque_minimo": _decimal(data.get("estoque_minimo") or 0, "estoque_minimo", row_number),
@@ -98,7 +103,7 @@ def importar_planilha(*, empresa, usuario, arquivo):
                     "planilha": f"O produto {product.codigo} está em contagem física. Tente novamente depois."
                 })
             previous_stock = product.estoque_atual
-            for field in ("nome", "unidade", "preco_venda", "estoque_minimo",
+            for field in ("nome", "unidade", "unidade_estoque", "fator_conversao", "preco_venda", "estoque_minimo",
                           "setor", "endereco", "codigo_barras"):
                 setattr(product, field, data[field])
             product.categoria = category
