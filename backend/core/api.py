@@ -247,6 +247,7 @@ class CaixaResumoView(TenantAPIView):
 
 
 class MovimentacaoCaixaView(TenantAPIView):
+    @transaction.atomic
     def post(self, request):
         empresa, membro = self.get_empresa(request)
         try:
