@@ -80,6 +80,8 @@ def parse_nfe_xml(upload):
     tax_id = _text(issuer, "CNPJ") or _text(issuer, "CPF")
     tax_id = "".join(ch for ch in tax_id if ch.isdigit())
     access_key = (info.attrib.get("Id") or "").removeprefix("NFe")
+    if access_key and (len(access_key) != 44 or not access_key.isdigit()):
+        raise ValidationError({"xml": "A chave de acesso da NF-e deve conter 44 dígitos."})
     number = _text(identification, "nNF")
     if not number:
         raise ValidationError({"xml": "A NF-e não informa o número da nota."})
@@ -254,9 +256,18 @@ def criar_compra_manual(*, empresa, usuario, dados):
         raise ValidationError({"itens": "Informe de 1 a 100 itens para a entrada manual."})
     if not (len(produto_ids) == len(quantities) == len(unit_costs)):
         raise ValidationError({"itens": "Revise os produtos, quantidades e custos informados."})
-    if CompraEntrada.objects.filter(
-        empresa=empresa, emitente_cnpj=cnpj, serie=serie, numero_nf=numero
-    ).exists() or (chave and CompraEntrada.objects.filter(
+    if chave and len(chave) != 44:
+        raise ValidationError({"chave_acesso": "A chave de acesso deve ter exatamente 44 dígitos."})
+    duplicate = CompraEntrada.objects.filter(
+        empresa=empresa, serie=serie, numero_nf=numero
+    )
+    if cnpj:
+        duplicate = duplicate.filter(emitente_cnpj=cnpj)
+    else:
+        duplicate = duplicate.filter(
+            emitente_cnpj="", fornecedor__nome__iexact=nome
+        )
+    if duplicate.exists() or (chave and CompraEntrada.objects.filter(
         empresa=empresa, chave_acesso=chave
     ).exists()):
         raise ValidationError({"nota": "Esta nota já foi lançada para esta empresa."})
