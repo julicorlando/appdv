@@ -59,7 +59,7 @@ As operações protegidas exigem conexão com o servidor. Vendas que falham por 
 - `POST /api/v1/auth/token/`
 - `GET /api/v1/minhas-empresas/`
 - `GET /api/v1/produtos/` e `GET /api/v1/categorias/`
-- `POST /api/v1/caixas/abrir/`, `POST /api/v1/caixas/{id}/fechar/`
+- `POST /api/v1/caixas/abrir/`, `POST /api/v1/caixas/{id}/fechar/`, `GET /api/v1/caixas/{id}/resumo/`, `POST /api/v1/caixas/movimentacoes/`
 - `POST /api/v1/vendas/`
 - `POST /api/v1/autorizacoes/`
 - `POST /api/v1/pedidos-web/` e `GET /api/v1/pedidos-web/`
