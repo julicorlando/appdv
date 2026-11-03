@@ -826,12 +826,24 @@ class PDVWindow(QMainWindow):
             return
         if len(telefone) in (10, 11):
             telefone = "55" + telefone
+        endereco_entrega, ok = QInputDialog.getText(
+            self, "Entrega", "Endereço de entrega (opcional):"
+        )
+        if not ok:
+            return
+        entrega_data, ok = QInputDialog.getText(
+            self, "Entrega", "Data desejada (AAAA-MM-DD; opcional):"
+        )
+        if not ok:
+            return
         itens = [
             {"produto": product_id, "quantidade": str(item["quantidade"])}
             for product_id, item in self.cart.items()
         ]
         try:
-            pedido = self.api.criar_pedido_web(nome.strip(), telefone, itens)
+            pedido = self.api.criar_pedido_web(
+                nome.strip(), telefone, itens, endereco_entrega.strip(), entrega_data.strip()
+            )
             total = Decimal(str(pedido["total"]))
             resumo = "\n".join(
                 f"• {item['quantidade']} x {item['produto']['nome']}"
