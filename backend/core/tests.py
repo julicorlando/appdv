@@ -60,6 +60,47 @@ class SalesAndFinanceFlowTests(TestCase):
         account = ContaReceber.objects.get(venda_id=sale.data["id"])
         self.assertEqual(account.saldo, Decimal("20.00"))
 
+    def test_sale_and_receipt_convert_pack_to_stock_units(self):
+        self.product.unidade = "CX"
+        self.product.unidade_estoque = "UN"
+        self.product.fator_conversao = Decimal("12")
+        self.product.preco_venda = Decimal("120.00")
+        self.product.estoque_atual = Decimal("36.000")
+        self.product.save()
+        opened = self.api.post(
+            "/api/v1/caixas/abrir/",
+            {"dispositivo_id": "qa-conversion", "saldo_abertura": "0"},
+            format="json", **self.tenant_headers,
+        )
+        sale = self.api.post(
+            "/api/v1/vendas/",
+            {
+                "idempotency_key": str(uuid.uuid4()),
+                "caixa": opened.data["id"],
+                "itens": [{"produto": self.product.pk, "quantidade": "2"}],
+                "pagamentos": [{"meio": "PIX", "valor": "240.00"}],
+            },
+            format="json", **self.tenant_headers,
+        )
+        self.assertEqual(sale.status_code, 201, sale.data)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.estoque_atual, Decimal("12.000"))
+        self.assertEqual(sale.data["itens"][0]["fator_conversao"], "12.000000")
+
+        supplier = Fornecedor.objects.create(empresa=self.company, nome="Fornecedor de caixas")
+        purchase = CompraEntrada.objects.create(
+            empresa=self.company, fornecedor=supplier, numero_nf="NF-CX-1",
+            valor_total=Decimal("120.00"), criado_por=self.user,
+        )
+        ItemCompraEntrada.objects.create(
+            compra=purchase, produto=self.product, codigo_xml="CX",
+            descricao_xml=self.product.nome, unidade_xml="CX",
+            quantidade=Decimal("1"), custo_unitario=Decimal("120"), total=Decimal("120"),
+        )
+        confirmar_recebimento(compra_id=purchase.pk, empresa=self.company, usuario=self.user)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.estoque_atual, Decimal("24.000"))
+
     def test_receiving_purchase_creates_payable_and_partial_payment(self):
         supplier = Fornecedor.objects.create(empresa=self.company, nome="Fornecedor QA")
         purchase = CompraEntrada.objects.create(
