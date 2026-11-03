@@ -4,7 +4,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from core.api import (
-    AbrirCaixaView, CaixaResumoView, CategoriaViewSet, CriarTokenView, EmpresaInfoView, FecharCaixaView, MovimentacaoCaixaView,
+    AbrirCaixaView, CaixaResumoView, CategoriaViewSet, CriarTokenView, DashboardEmpresaAPIView, EmpresaInfoView, FecharCaixaView, MovimentacaoCaixaView,
     MinhasEmpresasView, PedidosWebView, FinalizarPedidoWebView, ProdutoViewSet, VendaViewSet,
 )
 from core import web
@@ -42,6 +42,7 @@ urlpatterns = [
     path("api/v1/auth/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
     path("api/v1/minhas-empresas/", MinhasEmpresasView.as_view(), name="minhas-empresas"),
     path("api/v1/empresa/", EmpresaInfoView.as_view(), name="empresa-info"),
+    path("api/v1/empresa/resumo/", DashboardEmpresaAPIView.as_view(), name="empresa-resumo"),
     path("api/v1/caixas/abrir/", AbrirCaixaView.as_view(), name="abrir-caixa"),
     path("api/v1/caixas/<int:caixa_id>/fechar/", FecharCaixaView.as_view(), name="fechar-caixa"),
     path("api/v1/caixas/<int:caixa_id>/resumo/", CaixaResumoView.as_view(), name="resumo-caixa"),
