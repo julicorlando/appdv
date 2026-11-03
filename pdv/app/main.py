@@ -734,7 +734,30 @@ class PDVWindow(QMainWindow):
              for item in self.cart.values()),
             Decimal("0"),
         ).quantize(Decimal("0.01"))
-        payments = self._collect_payments(total)
+        credit = Decimal("0.00")
+        customer_id = None
+        credit_value, ok = QInputDialog.getDouble(
+            self, "Venda a prazo", "Valor a lançar em conta do cliente (R$):",
+            0.00, 0.00, float(total), 2,
+        )
+        if not ok:
+            return
+        credit = Decimal(str(credit_value)).quantize(Decimal("0.01"))
+        if credit > 0:
+            try:
+                customers = self.api.clientes()
+            except Exception as exc:
+                QMessageBox.critical(self, "Venda a prazo", f"É necessário estar conectado para consultar clientes: {exc}")
+                return
+            if not customers:
+                QMessageBox.warning(self, "Venda a prazo", "Cadastre o cliente no painel web antes de lançar crédito.")
+                return
+            choices = [f"{item['nome']} · limite R$ {Decimal(str(item['limite_credito'])):.2f}" for item in customers]
+            selected, accepted = QInputDialog.getItem(self, "Venda a prazo", "Cliente:", choices, 0, False)
+            if not accepted:
+                return
+            customer_id = customers[choices.index(selected)]["id"]
+        payments = self._collect_payments(total - credit)
         if payments is None:
             return
         self.last_payments = payments
@@ -743,6 +766,8 @@ class PDVWindow(QMainWindow):
             "idempotency_key": key,
             "caixa": self.cash_id,
             "observacao": "",
+            "cliente": customer_id,
+            "credito": str(credit),
             "itens": [
                 {
                     "produto": product_id, "quantidade": str(item["quantidade"]),
