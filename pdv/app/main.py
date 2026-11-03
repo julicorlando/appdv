@@ -10,8 +10,8 @@ import uuid
 from decimal import Decimal
 from pathlib import Path
 
-from PySide6.QtGui import QDesktopServices, QIcon
-from PySide6.QtCore import QUrl
+from PySide6.QtGui import QDesktopServices, QIcon, QPixmap
+from PySide6.QtCore import QUrl, QTimer, Qt
 import requests
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout,
@@ -53,6 +53,7 @@ class LoginDialog(QDialog):
         try:
             self.api = ArmazemAPI(self.url.text().strip())
             self.api.login(self.username.text().strip(), self.password.text())
+            self.api.username = self.username.text().strip()
             self.accept()
         except Exception as exc:
             QMessageBox.critical(self, "Não foi possível entrar", str(exc))
@@ -77,88 +78,178 @@ class PDVWindow(QMainWindow):
         self._select_company()
 
     def _build(self):
+        self.setStyleSheet("""
+            QMainWindow { background: #edf1f5; }
+            QWidget#posRoot { background: #edf1f5; }
+            QLabel { color: #1d2939; }
+            QLabel#brandTitle { color: #ffffff; font-size: 20px; font-weight: 800; }
+            QLabel#operator { color: #152238; font-weight: 700; }
+            QLabel#clock { color: #344054; font-weight: 600; }
+            QLabel#status { color: #14532d; font-weight: 700; }
+            QLabel#productName { background: #203879; color: #ffffff; font-size: 22px; font-weight: 800; padding: 9px 14px; border-radius: 8px; }
+            QLabel#productValue { background: #ffffff; color: #111827; font-size: 16px; font-weight: 700; padding: 7px 9px; border: 1px solid #d0d5dd; border-radius: 6px; }
+            QLabel#total { background: #203879; color: white; font-size: 32px; font-weight: 900; padding: 10px 18px; border-radius: 8px; }
+            QLabel#subtotal { color: #344054; font-size: 15px; font-weight: 700; }
+            QFrame#panel { background: white; border: 1px solid #d6dce5; border-radius: 10px; }
+            QLineEdit, QComboBox { min-height: 28px; padding: 4px 8px; border: 1px solid #c7ced8; border-radius: 6px; background: white; }
+            QPushButton { min-height: 34px; padding: 5px 10px; border: 0; border-radius: 6px; background: #e4eaf3; color: #17305f; font-weight: 700; }
+            QPushButton:hover { background: #d6e0ee; }
+            QPushButton#primary { background: #203879; color: white; min-height: 44px; }
+            QPushButton#primary:hover { background: #172a61; }
+            QTableWidget { background: white; alternate-background-color: #f6f8fb; gridline-color: #e4e7ec; border: 1px solid #d6dce5; border-radius: 7px; }
+            QHeaderView::section { background: #e8edf5; color: #334155; border: 0; padding: 6px; font-weight: 800; }
+        """)
         root = QWidget()
+        root.setObjectName("posRoot")
         layout = QVBoxLayout(root)
+        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(10)
+
         header = QHBoxLayout()
+        brand_icon = QLabel()
+        pixmap = QPixmap(asset_path("appdv-icon-256.png"))
+        if not pixmap.isNull():
+            brand_icon.setPixmap(pixmap.scaled(44, 44, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        brand_title = QLabel("ApPdv · Frente de Caixa")
+        brand_title.setObjectName("brandTitle")
+        brand_box = QWidget()
+        brand_box.setStyleSheet("background:#111b2d; border-radius:9px;")
+        brand_layout = QHBoxLayout(brand_box)
+        brand_layout.setContentsMargins(8, 4, 14, 4)
+        brand_layout.addWidget(brand_icon)
+        brand_layout.addWidget(brand_title)
+        header.addWidget(brand_box)
+
         self.company = QComboBox()
+        self.company.setMinimumWidth(150)
         self.status = QLabel("Conectando")
-        self.refresh = QPushButton("Atualizar catálogo")
-        self.refresh.clicked.connect(self._load_catalog)
-        self.web_orders = QPushButton("Pedidos confirmados")
-        self.web_orders.clicked.connect(self._review_web_orders)
-        self.cash_move = QPushButton("Sangria / suprimento…")
-        self.cash_move.clicked.connect(self._cash_movement)
-        self.close_cash = QPushButton("Fechar caixa")
-        self.close_cash.clicked.connect(self._close_cash)
-        self.cancel_sale = QPushButton("Cancelar venda…")
-        self.cancel_sale.clicked.connect(self._cancel_sale)
+        self.status.setObjectName("status")
+        self.operator_label = QLabel(f"Atendente: {getattr(self.api, 'username', '—')}")
+        self.operator_label.setObjectName("operator")
+        self.clock_label = QLabel()
+        self.clock_label.setObjectName("clock")
         header.addWidget(QLabel("Empresa"))
-        header.addWidget(self.company, 1)
+        header.addWidget(self.company)
+        header.addStretch(1)
+        header.addWidget(self.operator_label)
+        header.addWidget(self.clock_label)
         header.addWidget(self.status)
-        header.addWidget(self.refresh)
-        header.addWidget(self.web_orders)
-        header.addWidget(self.cash_move)
-        header.addWidget(self.close_cash)
-        header.addWidget(self.cancel_sale)
         layout.addLayout(header)
+
+        self.product_banner = QLabel("Leia um código de barras ou pesquise um produto")
+        self.product_banner.setObjectName("productName")
+        layout.addWidget(self.product_banner)
 
         search = QHBoxLayout()
         self.query = QLineEdit()
-        self.query.setPlaceholderText("Leia o código de barras ou pesquise pelo código")
+        self.query.setPlaceholderText("Código, código de barras ou nome do produto")
         self.query.returnPressed.connect(self._add_by_code)
-        add = QPushButton("Adicionar")
+        add = QPushButton("Adicionar ao carrinho")
+        add.setObjectName("primary")
         add.clicked.connect(self._add_by_code)
+        search.addWidget(QLabel("Código / busca"))
         search.addWidget(self.query, 1)
         search.addWidget(add)
         layout.addLayout(search)
 
-        self.catalog = QTableWidget(0, 5)
-        self.catalog.setHorizontalHeaderLabels(
-            ["Código", "Produto", "Setor", "Endereço", "Preço"]
-        )
-        self.catalog.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.catalog.cellDoubleClicked.connect(self._add_selected)
-        layout.addWidget(self.catalog, 3)
+        work_area = QHBoxLayout()
+        product_panel = QWidget()
+        product_panel.setObjectName("panel")
+        product_panel.setStyleSheet("background:white; border:1px solid #d6dce5; border-radius:10px;")
+        product_layout = QVBoxLayout(product_panel)
+        product_layout.addWidget(QLabel("Consulta de estoque e preço"))
+        detail_rows = QHBoxLayout()
+        logo = QLabel()
+        logo_pixmap = QPixmap(asset_path("appdv-logo-web.png"))
+        if not logo_pixmap.isNull():
+            logo.setPixmap(logo_pixmap.scaled(170, 90, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        detail_rows.addWidget(logo, 1)
+        facts = QVBoxLayout()
+        self.detail_code = QLabel("Código: —")
+        self.detail_quantity = QLabel("Quantidade no carrinho: —")
+        self.detail_price = QLabel("Preço unitário: —")
+        self.detail_line_total = QLabel("Preço total: —")
+        self.detail_stock = QLabel("Saldo disponível: —")
+        for label in (self.detail_code, self.detail_quantity, self.detail_price, self.detail_line_total, self.detail_stock):
+            label.setObjectName("productValue")
+            facts.addWidget(label)
+        detail_rows.addLayout(facts, 2)
+        product_layout.addLayout(detail_rows)
 
+        self.catalog = QTableWidget(0, 6)
+        self.catalog.setHorizontalHeaderLabels(["Código", "Produto", "Setor", "Endereço", "Preço", "Saldo"])
+        self.catalog.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.catalog.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.catalog.cellDoubleClicked.connect(self._add_selected)
+        product_layout.addWidget(self.catalog, 1)
+        work_area.addWidget(product_panel, 5)
+
+        cart_panel = QWidget()
+        cart_panel.setObjectName("panel")
+        cart_panel.setStyleSheet("background:white; border:1px solid #d6dce5; border-radius:10px;")
+        cart_layout = QVBoxLayout(cart_panel)
+        cart_layout.addWidget(QLabel("Itens da venda"))
         self.cart_table = QTableWidget(0, 5)
         self.cart_table.setHorizontalHeaderLabels(["Produto", "Qtd.", "Preço", "Desconto", "Total"])
         self.cart_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        layout.addWidget(self.cart_table, 2)
+        self.cart_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        cart_layout.addWidget(self.cart_table, 1)
         cart_actions = QHBoxLayout()
-        self.edit_cart_item = QPushButton("Alterar quantidade")
+        self.edit_cart_item = QPushButton("Quantidade")
         self.edit_cart_item.clicked.connect(self._edit_cart_item)
-        self.remove_cart_item = QPushButton("Remover item")
+        self.remove_cart_item = QPushButton("Remover")
         self.remove_cart_item.clicked.connect(self._remove_cart_item)
-        self.discount_cart_item = QPushButton("Aplicar desconto…")
+        self.discount_cart_item = QPushButton("Desconto")
         self.discount_cart_item.clicked.connect(self._discount_cart_item)
         self.discount_cart_item.setEnabled(False)
-        self.hold_cart = QPushButton("Suspender venda")
+        self.hold_cart = QPushButton("Suspender")
         self.hold_cart.clicked.connect(self._suspend_sale)
-        self.resume_cart = QPushButton("Retomar venda")
+        self.resume_cart = QPushButton("Retomar")
         self.resume_cart.clicked.connect(self._resume_sale)
-        cart_actions.addWidget(self.hold_cart)
-        cart_actions.addWidget(self.resume_cart)
-        cart_actions.addWidget(self.edit_cart_item)
-        cart_actions.addWidget(self.remove_cart_item)
-        cart_actions.addWidget(self.discount_cart_item)
-        cart_actions.addStretch(1)
-        layout.addLayout(cart_actions)
+        for button in (self.edit_cart_item, self.remove_cart_item, self.discount_cart_item, self.hold_cart, self.resume_cart):
+            cart_actions.addWidget(button)
+        cart_layout.addLayout(cart_actions)
+        work_area.addWidget(cart_panel, 7)
+        layout.addLayout(work_area, 1)
 
-        footer = QHBoxLayout()
-        self.total = QLabel("Total: R$ 0,00")
-        self.total.setStyleSheet("font-size: 24px; font-weight: 800")
-        self.payment_hint = QLabel("Pagamento dividido e troco definidos ao finalizar")
-        self.last_payments = []
-        self.pay = QPushButton("Finalizar venda")
+        totals = QHBoxLayout()
+        self.subtotal = QLabel("Subtotal: R$ 0,00")
+        self.subtotal.setObjectName("subtotal")
+        self.total = QLabel("TOTAL  R$ 0,00")
+        self.total.setObjectName("total")
+        totals.addWidget(self.subtotal, 1)
+        totals.addWidget(self.total, 1)
+        layout.addLayout(totals)
+
+        actions = QHBoxLayout()
+        self.pay = QPushButton("F2 · Finalizar venda")
+        self.pay.setObjectName("primary")
         self.pay.clicked.connect(self._checkout)
+        self.quote = QPushButton("F3 · Fazer / imprimir orçamento")
+        self.quote.clicked.connect(self._print_quote)
         self.web_order = QPushButton("Pedido via WhatsApp")
         self.web_order.clicked.connect(self._create_web_order)
-        footer.addWidget(self.total, 1)
-        footer.addWidget(self.payment_hint)
-        footer.addWidget(self.pay)
-        footer.addWidget(self.web_order)
-        layout.addLayout(footer)
+        self.web_orders = QPushButton("Pedidos confirmados")
+        self.web_orders.clicked.connect(self._review_web_orders)
+        self.cash_move = QPushButton("Sangria / suprimento")
+        self.cash_move.clicked.connect(self._cash_movement)
+        self.close_cash = QPushButton("Fechar caixa")
+        self.close_cash.clicked.connect(self._close_cash)
+        self.cancel_sale = QPushButton("Cancelar venda")
+        self.cancel_sale.clicked.connect(self._cancel_sale)
+        self.admin_button = QPushButton("Área administrativa")
+        self.admin_button.clicked.connect(self._open_admin_panel)
+        self.admin_button.setVisible(False)
+        for button in (self.pay, self.quote, self.web_order, self.web_orders, self.cash_move, self.close_cash, self.cancel_sale, self.admin_button):
+            actions.addWidget(button)
+        layout.addLayout(actions)
+
         self.setCentralWidget(root)
+        self._clock_timer = QTimer(self)
+        self._clock_timer.timeout.connect(self._update_clock)
+        self._clock_timer.start(1000)
+        self._update_clock()
 
     def _select_company(self):
         try:
