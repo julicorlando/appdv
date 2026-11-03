@@ -138,6 +138,8 @@ class Transacao(models.Model):
     tipo = models.CharField(max_length=10, choices=Tipo.choices, default=Tipo.PAGAMENTO)
     meio = models.CharField(max_length=10, choices=Meio.choices)
     valor = models.DecimalField(max_digits=12, decimal_places=2)
+    valor_recebido = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    troco = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     referencia_externa = models.CharField(max_length=120, blank=True)
     criado_em = models.DateTimeField(auto_now_add=True)
 
@@ -343,3 +345,21 @@ class ItemCompraEntrada(models.Model):
     quantidade = models.DecimalField(max_digits=14, decimal_places=3)
     custo_unitario = models.DecimalField(max_digits=14, decimal_places=4)
     total = models.DecimalField(max_digits=14, decimal_places=2)
+
+
+
+class MovimentacaoCaixa(models.Model):
+    class Tipo(models.TextChoices):
+        SANGRIA = "SANGRIA", "Sangria"
+        SUPRIMENTO = "SUPRIMENTO", "Suprimento"
+
+    empresa = models.ForeignKey(Empresa, on_delete=models.CASCADE, related_name="movimentacoes_caixa")
+    caixa = models.ForeignKey(Caixa, on_delete=models.PROTECT, related_name="movimentacoes")
+    operador = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    tipo = models.CharField(max_length=12, choices=Tipo.choices)
+    valor = models.DecimalField(max_digits=12, decimal_places=2)
+    motivo = models.CharField(max_length=250)
+    criado_em = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-criado_em",)
