@@ -163,3 +163,6 @@ class ArmazemAPI:
     def heartbeat(self, pendentes, erros=''):
         import socket
         return self._request('POST','/api/v1/terminais/heartbeat/',json={'identificador':socket.gethostname() + ':' + self.username,'pendentes':pendentes,'erros':erros}).json()
+
+    def iniciar_gestao(self, area='painel'):
+        return self._request('POST','/api/v1/desktop/session/',json={'area':area}).json()

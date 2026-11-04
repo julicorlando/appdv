@@ -358,3 +358,63 @@ class DiscountApprovalTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.product.refresh_from_db()
         self.assertEqual(self.product.estoque_atual, Decimal('100'))
+
+
+class DesktopManagementSessionTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user('desktop-admin', password='Password!12345')
+        self.company = Empresa.objects.create(nome='Desktop', slug='desktop')
+        self.member = MembroEmpresa.objects.create(empresa=self.company, usuario=self.user, papel='ADMIN')
+        self.api = APIClient()
+        self.api.force_authenticate(self.user)
+
+    def ticket(self, area='painel'):
+        return self.api.post('/api/v1/desktop/session/', {'area':area}, format='json', HTTP_X_EMPRESA_ID=str(self.company.pk))
+
+    def test_single_use_session_restricts_company(self):
+        response = self.ticket('clientes')
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(self.client.post(data['endpoint'], {'ticket':data['ticket']}).status_code, 403)
+        accepted = self.client.post(data['endpoint'], {'ticket':data['ticket']}, HTTP_X_APPDV_DESKTOP='1')
+        self.assertEqual(accepted.status_code, 302)
+        self.assertEqual(accepted.url, f'/empresa/{self.company.pk}/clientes/')
+        self.assertEqual(self.client.get(accepted.url).status_code, 200)
+        self.assertEqual(self.client.post(data['endpoint'], {'ticket':data['ticket']}, HTTP_X_APPDV_DESKTOP='1').status_code, 403)
+        self.assertEqual(self.client.get('/empresa/999/').status_code, 403)
+        self.assertEqual(self.client.get('/master/').status_code, 403)
+
+    def test_role_revocation_and_expiry(self):
+        from .models import SessaoDesktopTicket
+        from django.utils import timezone
+        from datetime import timedelta
+        data=self.ticket().json()
+        self.member.papel='CAIXA';self.member.save()
+        self.assertEqual(self.client.post(data['endpoint'], {'ticket':data['ticket']}, HTTP_X_APPDV_DESKTOP='1').status_code,403)
+        self.assertEqual(self.ticket().status_code,403)
+        self.member.papel='ADMIN';self.member.save()
+        data=self.ticket().json()
+        SessaoDesktopTicket.objects.update(expira_em=timezone.now()-timedelta(seconds=1))
+        self.assertEqual(self.client.post(data['endpoint'], {'ticket':data['ticket']}, HTTP_X_APPDV_DESKTOP='1').status_code,403)
+
+    def test_manager_modules_and_admin_only_team(self):
+        self.member.papel='GERENTE';self.member.save()
+        self.assertEqual(self.ticket('produtos').status_code,200)
+        self.assertEqual(self.ticket('equipe').status_code,403)
+        self.assertEqual(self.ticket('descontos').status_code,403)
+        self.client.force_login(self.user)
+        self.assertEqual(self.client.get(f'/empresa/{self.company.pk}/equipe/').status_code,403)
+        self.assertEqual(self.ticket('https://external.example/').status_code,400)
+
+    def test_admin_can_create_team_member_but_cannot_remove_own_access(self):
+        self.client.force_login(self.user)
+        url=f'/empresa/{self.company.pk}/equipe/'
+        response=self.client.post(url,{'username':'novo-caixa','email':'caixa@example.test','senha':'Inicial#Seguro9182','papel':'CAIXA'})
+        self.assertEqual(response.status_code,302)
+        created=get_user_model().objects.get(username='novo-caixa')
+        self.assertTrue(created.check_password('Inicial#Seguro9182'))
+        self.assertTrue(MembroEmpresa.objects.filter(empresa=self.company,usuario=created,papel='CAIXA').exists())
+        self.client.post(url,{'membro':self.member.pk,'papel':'CAIXA'})
+        self.member.refresh_from_db()
+        self.assertEqual(self.member.papel,'ADMIN')
+        self.assertTrue(self.member.ativo)

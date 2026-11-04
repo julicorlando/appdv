@@ -1,7 +1,7 @@
 [Setup]
 AppId={{A39E523E-6B90-4753-B524-7BF47E0BAF57}
 AppName=ApPdv
-AppVersion=0.1.0
+AppVersion=0.2.0
 AppPublisher=ApPdv
 DefaultDirName={autopf}\ApPdv
 DefaultGroupName=ApPdv
@@ -15,7 +15,7 @@ SolidCompression=yes
 WizardStyle=modern
 
 [Files]
-Source: "..\dist\ApPdv.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\dist\ApPdv\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\ApPdv"; Filename: "{app}\ApPdv.exe"

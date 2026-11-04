@@ -34,7 +34,7 @@
 <a href="{% url 'empresa-contas-receber' empresa.id %}"{% if request.resolver_match.url_name == "empresa-contas-receber" %} aria-current="page"{% endif %}>Contas a receber</a>
 <a href="{% url 'empresa-contas-pagar' empresa.id %}"{% if request.resolver_match.url_name == "empresa-contas-pagar" %} aria-current="page"{% endif %}>Contas a pagar</a>
 </div></details>
-<details class="nav-group" {% if request.resolver_match.url_name == "empresa-configuracao" or request.resolver_match.url_name == "empresa-autorizacao" %}open{% endif %}><summary>Administração</summary><div class="nav-menu"><a href="{% url 'gestao-sincronizacao' empresa.id %}">Sincronização dos caixas</a><a href="{% url 'gestao-fiscal' empresa.id %}">Central fiscal</a>{% if membro.papel == 'ADMIN' %}<a href="{% url 'gestao-descontos' empresa.id %}">Políticas de desconto</a>{% endif %}
+<details class="nav-group" {% if request.resolver_match.url_name == "empresa-configuracao" or request.resolver_match.url_name == "empresa-autorizacao" %}open{% endif %}><summary>Administração</summary><div class="nav-menu"><a href="{% url 'gestao-sincronizacao' empresa.id %}">Sincronização dos caixas</a><a href="{% url 'gestao-fiscal' empresa.id %}">Central fiscal</a>{% if membro.papel == 'ADMIN' %}<a href="{% url 'gestao-equipe' empresa.id %}">Equipe e permissões</a><a href="{% url 'gestao-descontos' empresa.id %}">Políticas de desconto</a>{% endif %}
 <a href="{% url 'empresa-configuracao' empresa.id %}"{% if request.resolver_match.url_name == "empresa-configuracao" %} aria-current="page"{% endif %}>Empresa e dados fiscais</a>
 <a href="{% url 'empresa-autorizacao' empresa.id %}"{% if request.resolver_match.url_name == "empresa-autorizacao" %} aria-current="page"{% endif %}>Autorizações</a>
 </div></details>

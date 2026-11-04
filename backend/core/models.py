@@ -661,3 +661,12 @@ class DocumentoFiscal(models.Model):
     xml = models.FileField(upload_to='fiscal/xml/', blank=True)
     danfe = models.FileField(upload_to='fiscal/danfe/', blank=True)
     atualizado_em = models.DateTimeField(auto_now=True)
+
+
+class SessaoDesktopTicket(models.Model):
+    resumo = models.CharField(max_length=64, unique=True)
+    usuario = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    empresa = models.ForeignKey(Empresa, on_delete=models.CASCADE)
+    area = models.CharField(max_length=40, default='')
+    expira_em = models.DateTimeField()
+    usada_em = models.DateTimeField(null=True, blank=True)

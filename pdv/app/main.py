@@ -10,7 +10,7 @@ import uuid
 from decimal import Decimal
 from pathlib import Path
 
-from PySide6.QtGui import QDesktopServices, QIcon, QPixmap
+from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtCore import QUrl, QTimer, Qt, QSettings, QThread, Signal
 import requests
 from PySide6.QtWidgets import (
@@ -113,63 +113,6 @@ class LoginDialog(QDialog):
             self.error.setText("Não foi possível conectar. Confira a internet e o servidor.")
         except (ValueError, KeyError):
             self.error.setText("Resposta de autenticação inválida. Confira o servidor.")
-
-
-class AdminPanelDialog(QDialog):
-    def __init__(self, api, empresa_id, company_name, cached_products, parent=None):
-        super().__init__(parent)
-        self.api = api
-        self.empresa_id = str(empresa_id)
-        self.setWindowTitle(f"Administração · {company_name}")
-        self.resize(760, 500)
-        layout = QVBoxLayout(self)
-        heading = QLabel(f"Resumo administrativo — {company_name}")
-        heading.setStyleSheet("font-size:22px;font-weight:800;color:palette(window-text)")
-        layout.addWidget(heading)
-        self.summary_label = QLabel("Carregando indicadores…")
-        self.summary_label.setWordWrap(True)
-        self.summary_label.setStyleSheet("font-size:15px;padding:14px;background:palette(alternate-base);color:palette(text);border-radius:8px")
-        layout.addWidget(self.summary_label)
-        try:
-            data = self.api.resumo_empresa()
-            self.summary_label.setText(
-                f"Produtos ativos: {data['produtos_ativos']}    ·    "
-                f"Estoque baixo: {data['estoque_baixo']}\n"
-                f"Vendas hoje: {data['vendas_hoje']}    ·    "
-                f"Faturamento hoje: R$ {Decimal(str(data['faturamento_hoje'])):.2f}\n"
-                f"Vendas no mês: {data['vendas_mes']}    ·    "
-                f"Faturamento no mês: R$ {Decimal(str(data['faturamento_mes'])):.2f}\n"
-                f"Pedidos confirmados aguardando: {data['pedidos_confirmados']}"
-            )
-        except Exception as exc:
-            low_stock = sum(
-                1 for product in cached_products
-                if Decimal(str(product.get("estoque_atual", 0)))
-                <= Decimal(str(product.get("estoque_minimo", 0)))
-            )
-            self.summary_label.setText(
-                f"Sem conexão para carregar indicadores atualizados.\n"
-                f"Catálogo local: {len(cached_products)} produtos · {low_stock} com estoque baixo.\n{exc}"
-            )
-
-        links = QHBoxLayout()
-        base = self.api.base_url.rstrip("/")
-        pages = [
-            ("Painel Web", f"/empresa/{self.empresa_id}/"),
-            ("Produtos e estoque", f"/empresa/{self.empresa_id}/produtos/"),
-            ("Compras / NF-e", f"/empresa/{self.empresa_id}/compras/"),
-            ("Inventário", f"/empresa/{self.empresa_id}/inventario/"),
-            ("Autorizações", f"/empresa/{self.empresa_id}/autorizacoes/"),
-            ("Vendas", f"/empresa/{self.empresa_id}/vendas/"),
-        ]
-        for label, path in pages:
-            button = QPushButton(label)
-            button.clicked.connect(lambda checked=False, url=base + path: QDesktopServices.openUrl(QUrl(url)))
-            links.addWidget(button)
-        layout.addLayout(links)
-        close = QPushButton("Fechar")
-        close.clicked.connect(self.accept)
-        layout.addWidget(close)
 
 
 class PendingSyncWorker(QThread):
@@ -414,10 +357,12 @@ class PDVWindow(QMainWindow):
         self.close_cash.clicked.connect(self._close_cash)
         self.cancel_sale = QPushButton("Cancelar venda")
         self.cancel_sale.clicked.connect(self._cancel_sale)
-        self.admin_button = QPushButton("Área administrativa")
+        self.open_cash_button = QPushButton("Abrir caixa")
+        self.open_cash_button.clicked.connect(self._open_cash_mode)
+        self.admin_button = QPushButton("Gestão da empresa")
         self.admin_button.clicked.connect(self._open_admin_panel)
         self.admin_button.setVisible(False)
-        for button in (self.pay, self.quote, self.find_quote, self.web_order, self.web_orders, self.cash_move, self.close_cash, self.cancel_sale, self.admin_button):
+        for button in (self.pay, self.quote, self.find_quote, self.web_order, self.web_orders, self.cash_move, self.close_cash, self.cancel_sale, self.open_cash_button, self.admin_button):
             actions.addWidget(button)
         layout.addLayout(actions)
 
@@ -462,6 +407,22 @@ class PDVWindow(QMainWindow):
             self.company_info = self.store.company(self.tenant_id) or {"nome": self.company.currentText(), "logo_data_url": ""}
         self._update_company_logo()
         self.cart.clear()
+        self.cash_id = None
+        if self.tenant_role in ('ADMIN','GERENTE'):
+            mode,accepted=QInputDialog.getItem(self,'Modo de trabalho','Como deseja utilizar o ApPdv?', ['Gestão da empresa','Operar caixa'],0,False)
+            if not accepted:return
+            if mode=='Gestão da empresa':
+                self.status.setText('Gestão · caixa fechado')
+                self._load_catalog()
+                QTimer.singleShot(0,self._open_admin_panel)
+                return
+        self._open_cash_mode()
+
+    def _open_cash_mode(self):
+        if not self.tenant_id:return
+        if self.cash_id:
+            QMessageBox.information(self,'Caixa','Seu caixa já está aberto.')
+            return
         saldo, accepted = QInputDialog.getDouble(
             self, "Abertura do caixa", "Saldo inicial em dinheiro (R$):",
             0.00, 0.00, 10000000.00, 2,
@@ -781,10 +742,25 @@ class PDVWindow(QMainWindow):
         if self.tenant_role not in ("ADMIN", "GERENTE"):
             QMessageBox.warning(self, "Acesso negado", "A área administrativa exige perfil autorizado.")
             return
-        dialog = AdminPanelDialog(
-            self.api, self.tenant_id, self.company.currentText(), self.products, self
-        )
-        dialog.exec()
+        from app.integrated_management import ManagementDialog
+        dialog=ManagementDialog(self.api,self.tenant_id,self.company.currentText(),self.tenant_role,self)
+        self.hide()
+        try:dialog.exec()
+        finally:
+            dialog.deleteLater()
+            self.show()
+            try:
+                self.company_info=self.api.empresa_info()
+                self.store.save_company(self.tenant_id,self.company_info)
+                self._update_company_logo()
+            except (requests.RequestException, ValueError):
+                pass
+            self._load_catalog()
+
+    def _preview_document(self,path):
+        from app.integrated_management import DocumentPreviewDialog
+        dialog=DocumentPreviewDialog(path,self)
+        dialog.exec();dialog.deleteLater()
 
     def _identify_customer(self):
         cpf, accepted = QInputDialog.getText(self, "Identificar cliente", "CPF do cliente:",
@@ -829,7 +805,7 @@ class PDVWindow(QMainWindow):
         folder.mkdir(parents=True, exist_ok=True)
         path = folder / f"orcamento-{quote['id']}.html"
         path.write_text(quote_html(quote, self.company_info, asset_path("appdv-logo-web.png")), encoding="utf-8")
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+        self._preview_document(path)
 
     def _print_quote(self):
         if self.checkout_payload:
@@ -1018,7 +994,7 @@ class PDVWindow(QMainWindow):
             box.addButton("Fechar", QMessageBox.ButtonRole.RejectRole)
             box.exec()
             if box.clickedButton() == open_button:
-                QDesktopServices.openUrl(QUrl.fromLocalFile(str(receipt_path)))
+                self._preview_document(receipt_path)
             self.store.clear_checkout_attempt(self.tenant_id, self.api.username)
             self.checkout_payload = None
             self.sale_key = str(uuid.uuid4())
@@ -1121,13 +1097,14 @@ class PDVWindow(QMainWindow):
             )
             from urllib.parse import quote
             link_whatsapp = f"https://wa.me/{telefone}?text={quote(mensagem)}"
-            QDesktopServices.openUrl(QUrl(link_whatsapp))
+            QApplication.clipboard().setText(mensagem)
+            QMessageBox.information(self, "Mensagem do pedido", "A mensagem com o link do pedido foi copiada. Cole no canal de atendimento do cliente quando desejar enviar.")
             self.cart.clear()
             self._render_cart()
             QMessageBox.information(
                 self, "Pedido criado",
-                f"Pedido #{pedido['id']} criado. O WhatsApp foi aberto com a mensagem pronta. "
-                "Revise e toque em Enviar para encaminhar ao cliente."
+                f"Pedido #{pedido['id']} criado. A mensagem está disponível na área de transferência. "
+                "O aplicativo não abre um navegador externo."
             )
         except Exception as exc:
             QMessageBox.critical(self, "Não foi possível criar o pedido", str(exc))
@@ -1448,6 +1425,7 @@ button {{ width:100%; padding:10px; margin:12px 0; }}
 
 
 def main():
+    QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     app = QApplication(sys.argv)
     app.setWindowIcon(QIcon(asset_path("appdv-icon-256.png")))
     app.setQuitOnLastWindowClosed(False)

@@ -306,3 +306,37 @@ def fiscal(request,empresa_id):
         return redirect('gestao-fiscal',empresa_id=empresa_id)
     rows=[dict(cells=[d.venda_id,d.get_estado_display(),d.chave,d.protocolo,d.mensagem,d.atualizado_em]) for d in DocumentoFiscal.objects.filter(empresa=m.empresa).select_related('venda').order_by('-pk')[:200]]
     return screen(request,m,'Central fiscal',['Venda','Estado','Chave','Protocolo','Retorno','Atualizado'],rows,fiscal=True,sales=Venda.objects.filter(empresa=m.empresa,estado='CONCLUIDA').order_by('-pk')[:200],note='Cadastro fiscal e acompanhamento de solicitações. Emissão, cancelamento na SEFAZ, XML autorizado e DANFE exigem integração fiscal real, ainda não configurada. Nenhuma autorização é simulada.')
+
+
+@login_required
+def equipe(request,empresa_id):
+    m=require_membership(request,empresa_id,('ADMIN',))
+    if request.method=='POST':
+        try:
+            from django.contrib.auth import get_user_model
+            from django.contrib.auth.password_validation import validate_password
+            with transaction.atomic():
+                Empresa.objects.select_for_update().get(pk=m.empresa.pk)
+                role=request.POST.get('papel','CAIXA')
+                if role not in ['CAIXA','GERENTE','ADMIN']:raise ValueError('Perfil inválido.')
+                if request.POST.get('membro'):
+                    target=MembroEmpresa.objects.select_for_update().get(pk=request.POST['membro'],empresa=m.empresa)
+                    active=request.POST.get('ativo')=='on'
+                    if target.usuario_id==request.user.pk and (not active or role!='ADMIN'):raise ValueError('Seu próprio acesso administrativo deve ser preservado.')
+                    if target.papel=='ADMIN' and (not active or role!='ADMIN') and not MembroEmpresa.objects.filter(empresa=m.empresa,papel='ADMIN',ativo=True).exclude(pk=target.pk).exists():raise ValueError('Mantenha ao menos um administrador ativo.')
+                    target.papel=role;target.ativo=active;target.save(update_fields=['papel','ativo'])
+                    audit(m.empresa,request.user,'MEMBRO_ATUALIZADO',target.pk,papel=role,ativo=active)
+                else:
+                    username=request.POST.get('username','').strip()
+                    password=request.POST.get('senha','')
+                    if not username or len(username)>150:raise ValueError('Informe um usuário válido.')
+                    user=get_user_model()(username=username,email=request.POST.get('email',''))
+                    validate_password(password,user)
+                    if len(password)<10:raise ValueError('A senha inicial deve ter ao menos 10 caracteres.')
+                    user.full_clean(exclude=['password']);user.set_password(password);user.save()
+                    target=MembroEmpresa.objects.create(empresa=m.empresa,usuario=user,papel=role)
+                    audit(m.empresa,request.user,'MEMBRO_CRIADO',target.pk,papel=role)
+            messages.success(request,'Equipe atualizada.')
+        except Exception as exc:messages.error(request,str(exc))
+        return redirect('gestao-equipe',empresa_id=empresa_id)
+    return render(request,'gestao_equipe.html',dict(empresa=m.empresa,membro=m,membros=MembroEmpresa.objects.filter(empresa=m.empresa).select_related('usuario')))

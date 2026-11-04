@@ -8,6 +8,7 @@ from core.api import (
     MinhasEmpresasView, PedidosWebView, FinalizarPedidoWebView, ProdutoViewSet, VendaViewSet,
 )
 from core.api import ClienteCPFView, OrcamentosView, AutorizarDescontoView, TerminalHeartbeatView
+from core.desktop_sessions import DesktopSessionView, iniciar_sessao_desktop
 from core import management_web as management
 from core import web
 
@@ -17,6 +18,9 @@ router.register("produtos", ProdutoViewSet, basename="produto")
 router.register("vendas", VendaViewSet, basename="venda")
 
 urlpatterns = [
+    path("api/v1/desktop/session/",DesktopSessionView.as_view()),
+    path("desktop/session/",iniciar_sessao_desktop),
+    path("empresa/<int:empresa_id>/equipe/",management.equipe,name="gestao-equipe"),
     path("", web.home, name="home"),
     path("accounts/login/", auth_views.LoginView.as_view(template_name="login.html"), name="login"),
     path("accounts/logout/", auth_views.LogoutView.as_view(), name="logout"),
