@@ -12,10 +12,33 @@ class Empresa(models.Model):
     """Tenant isolado: cada empresa possui catálogo, estoque, caixa e vendas próprios."""
     nome = models.CharField(max_length=180)
     cnpj = models.CharField(max_length=14, blank=True, db_index=True)
+    razao_social = models.CharField("Razão social", max_length=180, blank=True)
+    inscricao_estadual = models.CharField("Inscrição estadual", max_length=20, blank=True)
+    regime_tributario = models.CharField("Regime tributário", max_length=2, blank=True, choices=[("1", "Simples Nacional"), ("2", "Simples Nacional — excesso de sublimite"), ("3", "Regime normal"), ("4", "MEI")])
+    logradouro = models.CharField(max_length=180, blank=True)
+    numero = models.CharField("Número", max_length=20, blank=True)
+    complemento = models.CharField(max_length=100, blank=True)
+    bairro = models.CharField(max_length=100, blank=True)
+    municipio = models.CharField("Município", max_length=100, blank=True)
+    codigo_municipio = models.CharField("Código IBGE do município", max_length=7, blank=True)
+    uf = models.CharField("UF", max_length=2, blank=True)
+    cep = models.CharField("CEP", max_length=8, blank=True)
+    telefone = models.CharField(max_length=30, blank=True)
+    email = models.EmailField("E-mail", blank=True)
+    ambiente_fiscal = models.CharField("Ambiente fiscal", max_length=12, default="HOMOLOGACAO", choices=[("HOMOLOGACAO", "Homologação"), ("PRODUCAO", "Produção")])
+    provedor_fiscal = models.CharField("Provedor fiscal", max_length=100, blank=True)
     slug = models.SlugField(max_length=180, unique=True)
     ativa = models.BooleanField(default=True)
     logo = models.ImageField(upload_to="empresas/logos/", blank=True)
     criada_em = models.DateTimeField(auto_now_add=True)
+
+    def dados_documento(self):
+        campos = ("nome", "razao_social", "cnpj", "inscricao_estadual", "regime_tributario", "logradouro", "numero", "complemento", "bairro", "municipio", "codigo_municipio", "uf", "cep", "telefone", "email")
+        return {campo: getattr(self, campo) for campo in campos}
+
+    @property
+    def endereco_documento(self):
+        return ", ".join(str(valor) for valor in (self.logradouro, self.numero, self.complemento, self.bairro, self.municipio, self.uf, self.cep) if valor)
 
     def __str__(self):
         return self.nome

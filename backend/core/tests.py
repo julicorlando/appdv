@@ -173,3 +173,36 @@ class SalesAndFinanceFlowTests(TestCase):
         ):
             with self.subTest(path=path):
                 self.assertEqual(browser.get(path).status_code, 200)
+
+
+class CompanyDocumentSettingsTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user('fiscal-admin', password='test-only')
+        self.company = Empresa.objects.create(nome='Loja', slug='fiscal-loja')
+        self.membership = MembroEmpresa.objects.create(empresa=self.company, usuario=self.user, papel='ADMIN')
+        self.client.force_login(self.user)
+
+    def test_admin_saves_company_data_and_checkout_exposes_document_identity(self):
+        response = self.client.post(f'/empresa/{self.company.pk}/configuracao/', {
+            'nome': 'Loja', 'razao_social': 'Empresa & Filhos', 'cnpj': '12345678000199',
+            'uf': 'PE', 'cep': '55810000', 'codigo_municipio': '2604007',
+            'ambiente_fiscal': 'HOMOLOGACAO', 'frete_padrao': '0',
+        })
+        self.assertEqual(response.status_code, 302)
+        self.company.refresh_from_db()
+        self.assertEqual(self.company.razao_social, 'Empresa & Filhos')
+        response = self.client.get(f'/empresa/{self.company.pk}/caixa/')
+        self.assertContains(response, 'pos-company-details')
+        self.assertContains(response, '12345678000199')
+
+    def test_manager_cannot_modify_fiscal_identity(self):
+        self.membership.papel = 'GERENTE'
+        self.membership.save()
+        self.client.post(f'/empresa/{self.company.pk}/configuracao/', {'cnpj': '12345678000199', 'nome': 'Changed'})
+        self.company.refresh_from_db()
+        self.assertEqual(self.company.cnpj, '')
+        self.assertEqual(self.company.nome, 'Loja')
+
+    def test_other_tenant_cannot_edit_company(self):
+        other = Empresa.objects.create(nome='Outra', slug='outra-fiscal')
+        self.assertEqual(self.client.get(f'/empresa/{other.pk}/configuracao/').status_code, 403)

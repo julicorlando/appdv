@@ -182,7 +182,9 @@ def empresa_configuracao(request, empresa_id):
         request.POST or None, request.FILES or None, instance=membro.empresa
     )
     if membro.papel != MembroEmpresa.Papel.ADMIN:
-        form.fields.pop("frete_padrao")
+        for campo in list(form.fields):
+            if campo != "logo":
+                form.fields.pop(campo)
     if request.method == "POST":
         if form.is_valid():
             form.save()

@@ -90,9 +90,33 @@ class CategoriaSimpleForm(forms.ModelForm):
 class EmpresaLogoForm(forms.ModelForm):
     class Meta:
         model = Empresa
-        fields = ("logo", "frete_padrao")
+        fields = ("nome", "razao_social", "cnpj", "inscricao_estadual", "regime_tributario", "logradouro", "numero", "complemento", "bairro", "municipio", "codigo_municipio", "uf", "cep", "telefone", "email", "ambiente_fiscal", "provedor_fiscal", "logo", "frete_padrao")
         labels = {"frete_padrao": "Frete padrão para entrega (R$)"}
         widgets = {"logo": forms.ClearableFileInput(attrs={"accept": "image/png,image/jpeg,image/webp"})}
+
+    def clean_cnpj(self):
+        valor = self.cleaned_data["cnpj"]
+        if valor and (not valor.isascii() or not valor.isdigit() or len(valor) != 14):
+            raise ValidationError("Informe os 14 dígitos do CNPJ, sem pontuação.")
+        return valor
+
+    def clean_cep(self):
+        valor = self.cleaned_data["cep"]
+        if valor and (not valor.isascii() or not valor.isdigit() or len(valor) != 8):
+            raise ValidationError("Informe os 8 dígitos do CEP, sem pontuação.")
+        return valor
+
+    def clean_codigo_municipio(self):
+        valor = self.cleaned_data["codigo_municipio"]
+        if valor and (not valor.isascii() or not valor.isdigit() or len(valor) != 7):
+            raise ValidationError("Informe os 7 dígitos do código IBGE.")
+        return valor
+
+    def clean_uf(self):
+        valor = self.cleaned_data["uf"].upper()
+        if valor and valor not in "AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO".split():
+            raise ValidationError("Selecione uma UF válida.")
+        return valor
 
     def clean_logo(self):
         imagem = self.cleaned_data.get("logo")

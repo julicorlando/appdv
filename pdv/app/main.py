@@ -721,9 +721,16 @@ class PDVWindow(QMainWindow):
         system_img = f"<img src='{system_logo}' alt='ApPdv' style='max-width:180px;max-height:60px'>" if system_logo else "<b>ApPdv</b>"
         company_img = f"<img src='{company_logo}' alt='Logo {company}' style='max-width:200px;max-height:90px'>" if company_logo else ""
         logo_html = f"<div style='display:flex;align-items:center;gap:20px;flex-wrap:wrap'>{system_img}{company_img}</div>"
+        details = self.company_info
+        company_lines = [details.get("razao_social"),
+            "CNPJ: " + details["cnpj"] if details.get("cnpj") else "",
+            "IE: " + details["inscricao_estadual"] if details.get("inscricao_estadual") else "",
+            details.get("endereco_documento"),
+            " · ".join(filter(None, [details.get("telefone"), details.get("email")]))]
+        company_details = "".join(f"<div>{html.escape(str(line))}</div>" for line in company_lines if line)
         quote = f"""<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Orçamento {quote_id}</title>
 <style>body{{font:14px Arial,sans-serif;margin:28px;color:#17202a}}header{{display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #203879;padding-bottom:14px}}h1{{color:palette(window-text)}}table{{width:100%;border-collapse:collapse;margin-top:22px}}th,td{{padding:10px;border-bottom:1px solid #d9dee8;text-align:left}}th{{background:#edf1f7}}.summary{{text-align:right;font-size:17px;line-height:1.8;margin-top:18px}}.note{{background:#f4f6f9;padding:12px;border-radius:8px;margin-top:20px}}button{{padding:12px 20px;background:#203879;color:white;border:0;border-radius:6px;font-weight:bold}}@media print{{button{{display:none}}body{{margin:0}}}}</style></head>
-<body><header><div>{logo_html}<p>{company}</p></div><div><h1>ORÇAMENTO</h1><b>Nº {quote_id}</b><br>{datetime.now().strftime('%d/%m/%Y %H:%M')}</div></header>
+<body><header><div>{logo_html}<p>{company}</p>{company_details}</div><div><h1>ORÇAMENTO</h1><b>Nº {quote_id}</b><br>{datetime.now().strftime('%d/%m/%Y %H:%M')}</div></header>
 {customer_html}<p>Válido por {validity} dias · Vencimento: {(datetime.now() + __import__('datetime').timedelta(days=validity)).strftime('%d/%m/%Y')}</p>
 <table><thead><tr><th>Produto</th><th>Quantidade</th><th>Preço unitário</th><th>Desconto</th><th>Total</th></tr></thead><tbody>{"".join(rows)}</tbody></table>
 <div class="summary">Subtotal: R$ {subtotal:.2f}<br>Descontos: R$ {discounts:.2f}<br><strong>TOTAL: R$ {total:.2f}</strong></div>
@@ -967,7 +974,10 @@ class PDVWindow(QMainWindow):
             )
         system_img = f"<img class='system-logo' src='{system_logo}' alt='ApPdv'>" if system_logo else ""
         company_img = f"<img class='company-logo' src='{company_logo}' alt='Logo {company_name}'>" if company_logo else ""
-        tax_id = f"<div>{cnpj}</div>" if cnpj else ""
+        identity = [self.company_info.get("razao_social"), "CNPJ: " + cnpj if cnpj else "",
+                    self.company_info.get("inscricao_estadual"), self.company_info.get("endereco_documento"),
+                    self.company_info.get("telefone"), self.company_info.get("email")]
+        tax_id = "".join(f"<div>{html.escape(str(value))}</div>" for value in identity if value)
         payment_labels = {
             "DINHEIRO": "Dinheiro", "PIX": "PIX",
             "CARTAO": "Cartão", "OUTRO": "Outro",

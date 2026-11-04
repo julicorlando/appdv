@@ -35,7 +35,7 @@
 <a href="{% url 'empresa-contas-pagar' empresa.id %}"{% if request.resolver_match.url_name == "empresa-contas-pagar" %} aria-current="page"{% endif %}>Contas a pagar</a>
 </div></details>
 <details class="nav-group" {% if request.resolver_match.url_name == "empresa-configuracao" or request.resolver_match.url_name == "empresa-autorizacao" %}open{% endif %}><summary>Administração</summary><div class="nav-menu">
-<a href="{% url 'empresa-configuracao' empresa.id %}"{% if request.resolver_match.url_name == "empresa-configuracao" %} aria-current="page"{% endif %}>Empresa e cupom</a>
+<a href="{% url 'empresa-configuracao' empresa.id %}"{% if request.resolver_match.url_name == "empresa-configuracao" %} aria-current="page"{% endif %}>Empresa e dados fiscais</a>
 <a href="{% url 'empresa-autorizacao' empresa.id %}"{% if request.resolver_match.url_name == "empresa-autorizacao" %} aria-current="page"{% endif %}>Autorizações</a>
 </div></details>
 {% endif %}

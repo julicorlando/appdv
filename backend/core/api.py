@@ -47,7 +47,8 @@ class EmpresaInfoView(TenantAPIView):
             tipo = mimetypes.guess_type(empresa.logo.name)[0] or "image/png"
             logo_data_url = f"data:{tipo};base64,{conteudo}"
         return Response({
-            "id": empresa.pk, "nome": empresa.nome, "cnpj": empresa.cnpj,
+            "id": empresa.pk, **empresa.dados_documento(),
+            "endereco_documento": empresa.endereco_documento,
             "logo_data_url": logo_data_url,
         })
 

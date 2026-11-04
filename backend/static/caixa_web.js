@@ -174,6 +174,16 @@ function printText(text) {
     const name = popup.document.createElement("strong");
     name.textContent = pos.dataset.company;
     header.append(name);
+    const details = JSON.parse(document.getElementById("pos-company-details").textContent);
+    const lines = [details.razao_social, details.cnpj && "CNPJ: " + details.cnpj,
+        details.inscricao_estadual && "IE: " + details.inscricao_estadual,
+        [details.logradouro, details.numero, details.complemento, details.bairro, details.municipio, details.uf, details.cep].filter(Boolean).join(", "),
+        [details.telefone, details.email].filter(Boolean).join(" · ")];
+    for (const line of lines.filter(Boolean)) {
+        const paragraph = popup.document.createElement("div");
+        paragraph.textContent = line;
+        header.append(paragraph);
+    }
     const page = popup.document.createElement("pre");
     page.textContent = text;
     const button = popup.document.createElement("button");

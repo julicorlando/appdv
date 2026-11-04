@@ -2,7 +2,12 @@
 {% block title %}Pedido #{{ pedido.id }} · {{ pedido.empresa.nome }}{% endblock %}
 {% block content %}
 <section class="panel" style="max-width:760px;margin:2rem auto">
+  {% if pedido.empresa.logo %}<img src="{{ pedido.empresa.logo.url }}" alt="Logo {{ pedido.empresa.nome }}" style="max-width:220px;max-height:100px;object-fit:contain">{% endif %}
   <p class="eyebrow">{{ pedido.empresa.nome }}</p>
+  {% if pedido.empresa.razao_social %}<p>{{ pedido.empresa.razao_social }}</p>{% endif %}
+  {% if pedido.empresa.cnpj %}<p>CNPJ: {{ pedido.empresa.cnpj }}{% if pedido.empresa.inscricao_estadual %} · IE: {{ pedido.empresa.inscricao_estadual }}{% endif %}</p>{% endif %}
+  {% if pedido.empresa.endereco_documento %}<p>{{ pedido.empresa.endereco_documento }}</p>{% endif %}
+  <p>{{ pedido.empresa.telefone }} {{ pedido.empresa.email }}</p>
   <h1>{% if pedido.estado == "AGUARDANDO_CLIENTE" %}Orçamento{% else %}Pedido{% endif %} #{{ pedido.id }}</h1>
   <p>Cliente: {{ pedido.cliente_nome }} · Status: <strong>{{ pedido.get_estado_display }}</strong></p>
   {% if pedido.entrega_solicitada_em or pedido.endereco_entrega %}
