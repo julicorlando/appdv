@@ -1,0 +1,75 @@
+.web-pos {
+    --pos-blue: #203879;
+    --pos-text: #fff;
+}
+
+.web-pos .page-head {
+    margin-bottom: 12px;
+}
+
+.pos-banner,
+.pos-totals strong {
+    background: var(--pos-blue);
+    color: var(--pos-text);
+    border-radius: 8px;
+    padding: 10px 16px;
+}
+
+.pos-banner {
+    font-size: clamp(1.25rem, 3vw, 1.85rem);
+    margin: 0 0 12px;
+}
+
+.pos-brand {
+    display: block;
+    width: min(180px, 75%);
+    margin: 0 auto 16px;
+}
+
+.web-pos .pos-workspace {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+    margin-bottom: 0;
+}
+
+.pos-workspace .table-wrap {
+    min-height: 180px;
+    max-height: 45vh;
+}
+
+.pos-workspace td input {
+    min-width: 82px;
+}
+
+.pos-totals {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: end;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.pos-totals strong {
+    display: block;
+    font-size: clamp(1rem, 3vw, 1.85rem);
+}
+
+.pos-totals div {
+    text-align: right;
+}
+
+.pos-totals span {
+    font-weight: 700;
+}
+
+@media (max-width: 720px) {
+    .web-pos .pos-workspace {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (forced-colors: active) {
+    .pos-banner,
+    .pos-totals strong {
+        border: 1px solid CanvasText;
+    }
+}

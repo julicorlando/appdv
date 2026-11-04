@@ -2,13 +2,16 @@
 {% load static %}
 {% block title %}Caixa web · {{ loja.nome }}{% endblock %}
 {% block content %}
+<link rel="stylesheet" href="{% static 'caixa_web.css' %}">
 <section class="web-pos" data-empresa="{{ loja.pk }}" data-caixa="{{ caixa.pk|default:'' }}">
   {% csrf_token %}
-  <header class="page-head"><div><p class="eyebrow">FRENTE DE CAIXA</p><h1>{{ loja.nome }}</h1><p>{{ request.user.get_username }}</p></div><strong id="pos-status"></strong></header>
+  <header class="page-head"><div><p class="eyebrow">FRENTE DE CAIXA</p><h1>{{ loja.nome }}</h1><p>{{ request.user.get_username }}</p></div></header>
   <p id="pos-message" role="status" aria-live="polite"></p>
-  <div class="grid two">
+  <h2 class="pos-banner" id="pos-current">Aguardando produto</h2>
+  <div class="grid two pos-workspace">
     <section class="panel">
-      <h2>Produtos</h2>
+      <img class="pos-brand" src="{% static 'brand/appdv-logo-web.png' %}" alt="ApPdv">
+      <h2>Consulta de produto</h2>
       <label for="pos-search">Código, código de barras ou nome</label>
       <input id="pos-search" type="search" autocomplete="off">
       <div id="pos-products" class="quick-links"></div>
@@ -16,12 +19,13 @@
     <section class="panel">
       <h2>Carrinho</h2>
       <div class="table-wrap"><table><thead><tr><th>Produto</th><th>Qtd.</th><th>Valor</th><th></th></tr></thead><tbody id="pos-cart"></tbody></table></div>
-      <h2 id="pos-total">R$ 0,00</h2>
+
       <button class="secondary" id="pos-print" type="button">Imprimir orçamento</button>
       <button class="primary" id="pos-pay" type="button">Receber venda</button>
       <button class="secondary" id="pos-receipt" type="button" hidden>Imprimir comprovante</button>
     </section>
   </div>
+  <div class="pos-totals"><strong id="pos-status"></strong><div><span>Total da venda</span><strong id="pos-total">R$ 0,00</strong></div></div>
   <section class="panel">
     <h2>Turno</h2>
     <button class="primary" id="pos-open">Abrir caixa</button>

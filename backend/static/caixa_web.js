@@ -48,6 +48,8 @@ function render() {
     for (const id of ["summary", "movement", "close"]) field(id).disabled = !cash;
     field("pay").disabled = !cash || !cart.size;
     field("print").disabled = !cart.size;
+    const lastItem = [...cart.values()].at(-1);
+    field("current").textContent = lastItem?.product.nome || "Aguardando produto";
     field("total").textContent = money(total());
     field("cart").replaceChildren();
     for (const [id, item] of cart) {
