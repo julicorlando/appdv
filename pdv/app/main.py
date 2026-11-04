@@ -11,10 +11,10 @@ from decimal import Decimal
 from pathlib import Path
 
 from PySide6.QtGui import QDesktopServices, QIcon, QPixmap
-from PySide6.QtCore import QUrl, QTimer, Qt
+from PySide6.QtCore import QUrl, QTimer, Qt, QSettings
 import requests
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout,
+    QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout,
     QInputDialog, QLineEdit, QLabel, QMainWindow, QMessageBox, QPushButton,
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
@@ -34,29 +34,81 @@ class LoginDialog(QDialog):
         self.setWindowTitle("Conectar ao ApPdv")
         self.setWindowIcon(QIcon(asset_path("appdv-icon-256.png")))
         self.api = None
-        layout = QFormLayout(self)
-        self.url = QLineEdit(os.getenv("APPDV_API_URL", "https://appdv.axionwebdigital.com.br"))
-        self.username = QLineEdit()
+        self.setMinimumWidth(440)
+        self.settings = QSettings("ApPdv", "PDV")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(28, 24, 28, 24)
+        logo = QLabel()
+        logo.setPixmap(QPixmap(asset_path("appdv-logo-web.png")).scaled(
+            240, 90, Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation))
+        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(logo)
+        heading = QLabel("Entre para iniciar o caixa")
+        heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(heading)
+        form = QFormLayout()
+        self.url = QLineEdit(os.getenv("APPDV_API_URL") or self.settings.value(
+            "server", "https://appdv.axionwebdigital.com.br"))
+        self.username = QLineEdit(self.settings.value("username", ""))
         self.password = QLineEdit()
         self.password.setEchoMode(QLineEdit.EchoMode.Password)
-        layout.addRow("Endereço do servidor", self.url)
-        layout.addRow("Usuário", self.username)
-        layout.addRow("Senha", self.password)
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self.authenticate)
-        buttons.rejected.connect(self.reject)
-        layout.addRow(buttons)
+        for field in (self.url, self.username, self.password):
+            field.setMinimumHeight(36)
+        form.addRow("Usuário", self.username)
+        form.addRow("Senha", self.password)
+        layout.addLayout(form)
+        show_password = QCheckBox("Mostrar senha")
+        show_password.toggled.connect(lambda checked: self.password.setEchoMode(
+            QLineEdit.EchoMode.Normal if checked else QLineEdit.EchoMode.Password))
+        layout.addWidget(show_password)
+        self.remember = QCheckBox("Lembrar usuário")
+        self.remember.setChecked(bool(self.username.text()))
+        layout.addWidget(self.remember)
+        advanced = QCheckBox("Configurações avançadas")
+        layout.addWidget(advanced)
+        server_panel = QWidget()
+        server_form = QFormLayout(server_panel)
+        server_form.addRow("Servidor", self.url)
+        server_panel.hide()
+        advanced.toggled.connect(server_panel.setVisible)
+        layout.addWidget(server_panel)
+        self.error = QLabel()
+        self.error.setWordWrap(True)
+        layout.addWidget(self.error)
+        self.buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self.buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Entrar")
+        self.buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("Sair")
+        self.buttons.accepted.connect(self.authenticate)
+        self.buttons.rejected.connect(self.reject)
+        layout.addWidget(self.buttons)
+        (self.password if self.username.text() else self.username).setFocus()
 
     def authenticate(self):
+        if not self.username.text().strip() or not self.password.text():
+            self.error.setText("Informe o usuário e a senha.")
+            return
+        url = QUrl(self.url.text().strip())
+        if url.scheme() != "https" or not url.host() or url.userInfo():
+            self.error.setText("Informe um endereço HTTPS válido para o servidor.")
+            return
         try:
             self.api = ArmazemAPI(self.url.text().strip())
             self.api.login(self.username.text().strip(), self.password.text())
             self.api.username = self.username.text().strip()
+            self.settings.setValue("server", self.url.text().strip())
+            self.settings.setValue("username", self.api.username if self.remember.isChecked() else "")
+            self.password.clear()
             self.accept()
-        except Exception as exc:
-            QMessageBox.critical(self, "Não foi possível entrar", str(exc))
+        except requests.HTTPError as exc:
+            self.error.setText("Usuário ou senha inválidos." if exc.response is not None and
+                               exc.response.status_code in (400, 401, 403) else
+                               "O servidor não conseguiu concluir o acesso. Tente novamente.")
+        except requests.RequestException:
+            self.error.setText("Não foi possível conectar. Confira a internet e o servidor.")
+        except (ValueError, KeyError):
+            self.error.setText("Resposta de autenticação inválida. Confira o servidor.")
 
 
 class AdminPanelDialog(QDialog):
@@ -1121,11 +1173,13 @@ button {{ width:100%; padding:10px; margin:12px 0; }}
 def main():
     app = QApplication(sys.argv)
     app.setWindowIcon(QIcon(asset_path("appdv-icon-256.png")))
+    app.setQuitOnLastWindowClosed(False)
     login = LoginDialog()
     if login.exec() != QDialog.DialogCode.Accepted:
         return
     window = PDVWindow(login.api)
     window.show()
+    app.setQuitOnLastWindowClosed(True)
     sys.exit(app.exec())
 
 

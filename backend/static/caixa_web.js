@@ -150,18 +150,40 @@ field("pay").onclick = () => {
 };
 field("cancel-pay").onclick = () => field("payment").close();
 function printable(title) {
-    return [title, ...[...cart.values()].map(item =>
+    return [title, new Date().toLocaleString("pt-BR"), ...[...cart.values()].map(item =>
         item.quantity + " × " + item.product.nome + " — " + money(cents(item) / 100)
     ), "Total: " + money(total())].join("\n");
 }
 function printText(text) {
     const popup = window.open("", "_blank", "popup");
     if (!popup) { field("message").textContent = "Permita janelas pop-up para imprimir."; return; }
+    popup.document.title = "ApPdv — impressão";
+    const style = popup.document.createElement("style");
+    style.textContent = "body{font:13px Arial;color:#000;background:#fff;max-width:76mm;margin:8mm auto}header{text-align:center;border-bottom:1px dashed #000;padding-bottom:10px}img{display:block;max-width:60mm;max-height:20mm;margin:8px auto;object-fit:contain}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;line-height:1.6}@media print{body{margin:0;max-width:100%}button{display:none}}";
+    popup.document.head.append(style);
+    const header = popup.document.createElement("header");
+    const images = [];
+    for (const [src, label] of [[pos.dataset.systemLogo, "ApPdv"], [pos.dataset.companyLogo, pos.dataset.company]]) {
+        if (!src) continue;
+        const image = popup.document.createElement("img");
+        image.alt = label;
+        image.src = new URL(src, window.location.href).href;
+        header.append(image);
+        images.push(image);
+    }
+    const name = popup.document.createElement("strong");
+    name.textContent = pos.dataset.company;
+    header.append(name);
     const page = popup.document.createElement("pre");
-    page.style.whiteSpace = "pre-wrap";
     page.textContent = text;
-    popup.document.body.append(page);
-    popup.print();
+    const button = popup.document.createElement("button");
+    button.textContent = "Imprimir";
+    button.onclick = () => popup.print();
+    popup.document.body.append(header, page, button);
+    // Aguarda as logos antes de abrir o diálogo de impressão.
+    Promise.all(images.map(image => image.decode().catch(() => {}))).then(() => {
+        if (!popup.closed) { popup.focus(); popup.print(); }
+    });
 }
 field("print").onclick = () => printText(printable("ORÇAMENTO"));
 field("receipt").onclick = () => printText(receipt);

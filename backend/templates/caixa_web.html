@@ -3,7 +3,7 @@
 {% block title %}Caixa web · {{ loja.nome }}{% endblock %}
 {% block content %}
 <link rel="stylesheet" href="{% static 'caixa_web.css' %}">
-<section class="web-pos" data-empresa="{{ loja.pk }}" data-caixa="{{ caixa.pk|default:'' }}">
+<section class="web-pos" data-empresa="{{ loja.pk }}" data-caixa="{{ caixa.pk|default:'' }}" data-company="{{ loja.nome }}" data-system-logo="{% static 'brand/appdv-logo-web.png' %}" {% if loja.logo %}data-company-logo="{{ loja.logo.url }}"{% endif %}>
   {% csrf_token %}
   <header class="page-head"><div><p class="eyebrow">FRENTE DE CAIXA</p><h1>{{ loja.nome }}</h1><p>{{ request.user.get_username }}</p></div></header>
   <p id="pos-message" role="status" aria-live="polite"></p>
