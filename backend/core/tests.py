@@ -317,4 +317,5 @@ class UnknownCPFResponseTests(TestCase):
         api.force_authenticate(user)
         response = api.get('/api/v1/clientes/cpf/', {'cpf': '52998224725'}, HTTP_X_EMPRESA_ID=str(company.pk))
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {'encontrado': False})
+        self.assertEqual(response.content, b'null')
+        self.assertIsNone(response.json())
