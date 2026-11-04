@@ -68,11 +68,11 @@ class AdminPanelDialog(QDialog):
         self.resize(760, 500)
         layout = QVBoxLayout(self)
         heading = QLabel(f"Resumo administrativo — {company_name}")
-        heading.setStyleSheet("font-size:22px;font-weight:800;color:#203879")
+        heading.setStyleSheet("font-size:22px;font-weight:800;color:palette(window-text)")
         layout.addWidget(heading)
         self.summary_label = QLabel("Carregando indicadores…")
         self.summary_label.setWordWrap(True)
-        self.summary_label.setStyleSheet("font-size:15px;padding:14px;background:#f3f6fa;border-radius:8px")
+        self.summary_label.setStyleSheet("font-size:15px;padding:14px;background:palette(alternate-base);color:palette(text);border-radius:8px")
         layout.addWidget(self.summary_label)
         try:
             data = self.api.resumo_empresa()
@@ -137,25 +137,35 @@ class PDVWindow(QMainWindow):
 
     def _build(self):
         self.setStyleSheet("""
-            QMainWindow { background: #edf1f5; }
-            QWidget#posRoot { background: #edf1f5; }
-            QLabel { color: #1d2939; }
-            QLabel#brandTitle { color: #ffffff; font-size: 20px; font-weight: 800; }
-            QLabel#operator { color: #152238; font-weight: 700; }
-            QLabel#clock { color: #344054; font-weight: 600; }
-            QLabel#status { color: #14532d; font-weight: 700; }
-            QLabel#productName { background: #203879; color: #ffffff; font-size: 22px; font-weight: 800; padding: 9px 14px; border-radius: 8px; }
-            QLabel#productValue { background: #ffffff; color: #111827; font-size: 16px; font-weight: 700; padding: 7px 9px; border: 1px solid #d0d5dd; border-radius: 6px; }
-            QLabel#total { background: #203879; color: white; font-size: 32px; font-weight: 900; padding: 10px 18px; border-radius: 8px; }
-            QLabel#subtotal { color: #344054; font-size: 15px; font-weight: 700; }
-            QFrame#panel { background: white; border: 1px solid #d6dce5; border-radius: 10px; }
-            QLineEdit, QComboBox { min-height: 28px; padding: 4px 8px; border: 1px solid #c7ced8; border-radius: 6px; background: white; }
-            QPushButton { min-height: 34px; padding: 5px 10px; border: 0; border-radius: 6px; background: #e4eaf3; color: #17305f; font-weight: 700; }
-            QPushButton:hover { background: #d6e0ee; }
-            QPushButton#primary { background: #203879; color: white; min-height: 44px; }
-            QPushButton#primary:hover { background: #172a61; }
-            QTableWidget { background: white; alternate-background-color: #f6f8fb; gridline-color: #e4e7ec; border: 1px solid #d6dce5; border-radius: 7px; }
-            QHeaderView::section { background: #e8edf5; color: #334155; border: 0; padding: 6px; font-weight: 800; }
+            QLabel#brandTitle { color: palette(highlighted-text); font-size: 20px; font-weight: 800; }
+            QLabel#operator, QLabel#clock, QLabel#status { font-weight: 700; }
+            QLabel#productName, QLabel#total {
+                background: palette(highlight);
+                color: palette(highlighted-text);
+                font-weight: 800;
+                padding: 9px 14px;
+                border-radius: 8px;
+            }
+            QLabel#productName { font-size: 22px; }
+            QLabel#total { font-size: 32px; }
+            QLabel#productValue {
+                background: palette(base);
+                color: palette(text);
+                font-size: 16px;
+                font-weight: 700;
+                padding: 7px 9px;
+                border: 1px solid palette(mid);
+                border-radius: 6px;
+            }
+            QLabel#subtotal { font-size: 15px; font-weight: 700; }
+            QFrame#panel {
+                background: palette(window);
+                border: 1px solid palette(mid);
+                border-radius: 10px;
+            }
+            QLineEdit, QComboBox { min-height: 28px; }
+            QPushButton { min-height: 34px; padding: 5px 10px; }
+            QPushButton#primary { min-height: 44px; font-weight: 700; }
         """)
         root = QWidget()
         root.setObjectName("posRoot")
@@ -171,7 +181,7 @@ class PDVWindow(QMainWindow):
         brand_title = QLabel("ApPdv · Frente de Caixa")
         brand_title.setObjectName("brandTitle")
         brand_box = QWidget()
-        brand_box.setStyleSheet("background:#111b2d; border-radius:9px;")
+        brand_box.setStyleSheet("background:palette(highlight); border-radius:9px;")
         brand_layout = QHBoxLayout(brand_box)
         brand_layout.setContentsMargins(8, 4, 14, 4)
         brand_layout.addWidget(brand_icon)
@@ -213,7 +223,6 @@ class PDVWindow(QMainWindow):
         work_area = QHBoxLayout()
         product_panel = QWidget()
         product_panel.setObjectName("panel")
-        product_panel.setStyleSheet("background:white; border:1px solid #d6dce5; border-radius:10px;")
         product_layout = QVBoxLayout(product_panel)
         product_layout.addWidget(QLabel("Consulta de estoque e preço"))
         detail_rows = QHBoxLayout()
@@ -245,7 +254,6 @@ class PDVWindow(QMainWindow):
 
         cart_panel = QWidget()
         cart_panel.setObjectName("panel")
-        cart_panel.setStyleSheet("background:white; border:1px solid #d6dce5; border-radius:10px;")
         cart_layout = QVBoxLayout(cart_panel)
         cart_layout.addWidget(QLabel("Itens da venda"))
         self.cart_table = QTableWidget(0, 5)
@@ -656,7 +664,7 @@ class PDVWindow(QMainWindow):
         logo_path = Path(asset_path("appdv-logo-web.png"))
         logo_html = f"<img src='{logo_path.as_uri()}' alt='ApPdv' style='max-width:220px;max-height:70px'>" if logo_path.exists() else "<b>ApPdv</b>"
         quote = f"""<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Orçamento {quote_id}</title>
-<style>body{{font:14px Arial,sans-serif;margin:28px;color:#17202a}}header{{display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #203879;padding-bottom:14px}}h1{{color:#203879}}table{{width:100%;border-collapse:collapse;margin-top:22px}}th,td{{padding:10px;border-bottom:1px solid #d9dee8;text-align:left}}th{{background:#edf1f7}}.summary{{text-align:right;font-size:17px;line-height:1.8;margin-top:18px}}.note{{background:#f4f6f9;padding:12px;border-radius:8px;margin-top:20px}}button{{padding:12px 20px;background:#203879;color:white;border:0;border-radius:6px;font-weight:bold}}@media print{{button{{display:none}}body{{margin:0}}}}</style></head>
+<style>body{{font:14px Arial,sans-serif;margin:28px;color:#17202a}}header{{display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #203879;padding-bottom:14px}}h1{{color:palette(window-text)}}table{{width:100%;border-collapse:collapse;margin-top:22px}}th,td{{padding:10px;border-bottom:1px solid #d9dee8;text-align:left}}th{{background:#edf1f7}}.summary{{text-align:right;font-size:17px;line-height:1.8;margin-top:18px}}.note{{background:#f4f6f9;padding:12px;border-radius:8px;margin-top:20px}}button{{padding:12px 20px;background:#203879;color:white;border:0;border-radius:6px;font-weight:bold}}@media print{{button{{display:none}}body{{margin:0}}}}</style></head>
 <body><header><div>{logo_html}<p>{company}</p></div><div><h1>ORÇAMENTO</h1><b>Nº {quote_id}</b><br>{datetime.now().strftime('%d/%m/%Y %H:%M')}</div></header>
 {customer_html}<p>Válido por {validity} dias · Vencimento: {(datetime.now() + __import__('datetime').timedelta(days=validity)).strftime('%d/%m/%Y')}</p>
 <table><thead><tr><th>Produto</th><th>Quantidade</th><th>Preço unitário</th><th>Desconto</th><th>Total</th></tr></thead><tbody>{"".join(rows)}</tbody></table>
@@ -848,13 +856,14 @@ class PDVWindow(QMainWindow):
                 nome.strip(), telefone, itens, endereco_entrega.strip(), entrega_data.strip()
             )
             total = Decimal(str(pedido["total"]))
+            frete = Decimal(str(pedido.get("frete", "0")))
             resumo = "\n".join(
                 f"• {item['quantidade']} x {item['produto']['nome']}"
                 for item in self.cart.values()
             )
             mensagem = (
                 f"Olá, {nome.strip()}! Seu pedido #{pedido['id']} da {self.company.currentText()}:"
-                f"\n{resumo}\nTotal: R$ {total:.2f}\n"
+                f"\n{resumo}\nFrete: R$ {frete:.2f}\nTotal: R$ {total:.2f}\n"
                 f"Confira e confirme pelo link: {pedido['public_url']}"
             )
             from urllib.parse import quote

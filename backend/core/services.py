@@ -14,7 +14,7 @@ from .models import (
 
 
 @transaction.atomic
-def registrar_venda(*, empresa, usuario, dados):
+def registrar_venda(*, empresa, usuario, dados, frete=Decimal("0.00")):
     try:
         chave = uuid.UUID(str(dados.get("idempotency_key")))
     except (ValueError, TypeError, AttributeError):
@@ -111,7 +111,7 @@ def registrar_venda(*, empresa, usuario, dados):
             raise ValidationError({"itens": f"Estoque insuficiente para {produto.nome}."})
 
     desconto_total = sum((item[2] for item in itens_calculados), Decimal("0"))
-    total = subtotal - desconto_total
+    total = subtotal - desconto_total + frete
     valores_pagamento = []
     soma_pagamentos = Decimal("0")
     for pagamento in pagamentos:
@@ -161,7 +161,7 @@ def registrar_venda(*, empresa, usuario, dados):
     venda = Venda.objects.create(
         empresa=empresa, idempotency_key=chave, caixa=caixa, operador=usuario,
         cliente=cliente, estado=Venda.Estado.CONCLUIDA, subtotal=subtotal, desconto=desconto_total,
-        total=total, observacao=str(dados.get("observacao", ""))[:2000],
+        total=total, frete=frete, observacao=str(dados.get("observacao", ""))[:2000],
     )
     for produto, quantidade, desconto, total_linha, fator in itens_calculados:
         ItemVenda.objects.create(

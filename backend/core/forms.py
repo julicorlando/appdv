@@ -90,7 +90,8 @@ class CategoriaSimpleForm(forms.ModelForm):
 class EmpresaLogoForm(forms.ModelForm):
     class Meta:
         model = Empresa
-        fields = ("logo",)
+        fields = ("logo", "frete_padrao")
+        labels = {"frete_padrao": "Frete padrão para entrega (R$)"}
         widgets = {"logo": forms.ClearableFileInput(attrs={"accept": "image/png,image/jpeg,image/webp"})}
 
     def clean_logo(self):

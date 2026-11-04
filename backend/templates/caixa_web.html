@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Caixa web · {{ loja.nome }}{% endblock %}
+{% block content %}
+<section class="web-pos" data-empresa="{{ loja.pk }}" data-caixa="{{ caixa.pk|default:'' }}">
+  {% csrf_token %}
+  <header class="page-head"><div><p class="eyebrow">FRENTE DE CAIXA</p><h1>{{ loja.nome }}</h1><p>{{ request.user.get_username }}</p></div><strong id="pos-status"></strong></header>
+  <p id="pos-message" role="status" aria-live="polite"></p>
+  <div class="grid two">
+    <section class="panel">
+      <h2>Produtos</h2>
+      <label for="pos-search">Código, código de barras ou nome</label>
+      <input id="pos-search" type="search" autocomplete="off">
+      <div id="pos-products" class="quick-links"></div>
+    </section>
+    <section class="panel">
+      <h2>Carrinho</h2>
+      <div class="table-wrap"><table><thead><tr><th>Produto</th><th>Qtd.</th><th>Valor</th><th></th></tr></thead><tbody id="pos-cart"></tbody></table></div>
+      <h2 id="pos-total">R$ 0,00</h2>
+      <button class="secondary" id="pos-print" type="button">Imprimir orçamento</button>
+      <button class="primary" id="pos-pay" type="button">Receber venda</button>
+      <button class="secondary" id="pos-receipt" type="button" hidden>Imprimir comprovante</button>
+    </section>
+  </div>
+  <section class="panel">
+    <h2>Turno</h2>
+    <button class="primary" id="pos-open">Abrir caixa</button>
+    <button class="secondary" id="pos-summary">Conferência</button>
+    <button class="secondary" id="pos-movement">Suprimento / sangria</button>
+    <button class="secondary" id="pos-close">Fechar caixa</button>
+    <pre id="pos-summary-text" hidden></pre>
+  </section>
+  <dialog id="pos-payment">
+    <form id="pos-payment-form">
+      <h2>Pagamento</h2><p id="pos-due"></p>
+      {% for value, label in meios %}
+      <label>{{ label }} <input type="number" name="{{ value }}" min="0" step="0.01" placeholder="0,00"></label>
+      {% endfor %}
+      <button type="submit" class="primary">Confirmar venda</button>
+      <button type="button" class="secondary" id="pos-cancel-pay">Voltar</button>
+    </form>
+  </dialog>
+</section>
+<script defer src="{% static 'caixa_web.js' %}"></script>
+{% endblock %}

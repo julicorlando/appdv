@@ -133,6 +133,8 @@ def require_membership(request, empresa_id, papeis=None):
 @login_required
 def empresa_dashboard(request, empresa_id):
     membro = require_membership(request, empresa_id)
+    if membro.papel == MembroEmpresa.Papel.CAIXA:
+        return redirect("caixa-web", empresa_id=empresa_id)
     today = timezone.localdate()
     vendas = Venda.objects.filter(
         empresa=membro.empresa, estado=Venda.Estado.CONCLUIDA, realizada_em__date=today
@@ -158,6 +160,20 @@ def empresa_dashboard(request, empresa_id):
 
 
 @login_required
+def caixa_web(request, empresa_id):
+    from .models import Caixa, Transacao
+    membro = require_membership(request, empresa_id)
+    caixa = Caixa.objects.filter(
+        empresa=membro.empresa, operador=request.user,
+        dispositivo_id="web", estado=Caixa.Estado.ABERTO,
+    ).first()
+    return render(request, "caixa_web.html", {
+        "loja": membro.empresa, "caixa": caixa,
+        "meios": Transacao.Meio.choices,
+    })
+
+
+@login_required
 def empresa_configuracao(request, empresa_id):
     membro = require_membership(
         request, empresa_id, (MembroEmpresa.Papel.ADMIN, MembroEmpresa.Papel.GERENTE)
@@ -165,12 +181,14 @@ def empresa_configuracao(request, empresa_id):
     form = EmpresaLogoForm(
         request.POST or None, request.FILES or None, instance=membro.empresa
     )
+    if membro.papel != MembroEmpresa.Papel.ADMIN:
+        form.fields.pop("frete_padrao")
     if request.method == "POST":
         if form.is_valid():
             form.save()
-            messages.success(request, "Logo da empresa atualizada.")
+            messages.success(request, "Configurações da empresa atualizadas.")
             return redirect("empresa-configuracao", empresa_id=empresa_id)
-        messages.error(request, "Não foi possível salvar a imagem. Use PNG, JPG ou WebP de até 2 MB.")
+        messages.error(request, "Confira os campos da configuração.")
     logo_preview = ""
     if membro.empresa.logo:
         with membro.empresa.logo.open("rb") as arquivo:
@@ -344,10 +362,15 @@ def pedido_publico(request, codigo):
         elif pedido.expira_em <= timezone.now():
             messages.error(request, "O prazo deste pedido expirou. Fale com a loja para atualizar os valores.")
         elif request.POST.get("acao") == "confirmar":
-            pedido.estado = PedidoWeb.Estado.CONFIRMADO
-            pedido.confirmado_em = timezone.now()
-            pedido.save(update_fields=("estado", "confirmado_em"))
-            messages.success(request, "Pedido confirmado. A loja recebeu seu aviso e vai separar os produtos.")
+            agora = timezone.now()
+            aprovado = PedidoWeb.objects.filter(
+                pk=pedido.pk, estado=PedidoWeb.Estado.AGUARDANDO_CLIENTE,
+                expira_em__gt=agora,
+            ).update(estado=PedidoWeb.Estado.CONFIRMADO, confirmado_em=agora)
+            if aprovado:
+                messages.success(request, "Orçamento aprovado. A loja pode preparar o pedido com os mesmos itens.")
+            else:
+                messages.info(request, "O orçamento expirou ou já foi atualizado.")
         return redirect("pedido-publico", codigo=pedido.codigo_publico)
     return render(request, "pedido_publico.html", {
         "pedido": pedido, "itens": pedido.itens.all(),
@@ -360,12 +383,14 @@ def empresa_pedidos_web(request, empresa_id):
     membro = require_membership(request, empresa_id)
     if request.method == "POST":
         pedido = get_object_or_404(PedidoWeb, pk=request.POST.get("pedido"), empresa=membro.empresa)
-        if request.POST.get("acao") == "separando" and pedido.estado == PedidoWeb.Estado.CONFIRMADO:
-            pedido.estado = PedidoWeb.Estado.SEPARANDO
-            pedido.save(update_fields=("estado",))
-            messages.success(request, f"Pedido #{pedido.pk} marcado para separação.")
+        convertido = request.POST.get("acao") == "separando" and PedidoWeb.objects.filter(
+            pk=pedido.pk, empresa=membro.empresa,
+            estado=PedidoWeb.Estado.CONFIRMADO, expira_em__gt=timezone.now(),
+        ).update(estado=PedidoWeb.Estado.SEPARANDO)
+        if convertido:
+            messages.success(request, f"Orçamento #{pedido.pk} convertido em pedido para separação.")
         else:
-            messages.error(request, "Ação inválida ou pedido ainda não confirmado.")
+            messages.error(request, "O orçamento precisa estar aprovado, dentro da validade e aguardando separação.")
         return redirect("empresa-pedidos-web", empresa_id=empresa_id)
     pedidos = PedidoWeb.objects.filter(empresa=membro.empresa).prefetch_related(
         "itens"

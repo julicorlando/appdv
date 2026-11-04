@@ -8,6 +8,7 @@ from django.db.models import F, Sum
 from django.urls import reverse
 from rest_framework import mixins, viewsets, status
 from rest_framework.decorators import action
+from rest_framework.filters import SearchFilter
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -113,6 +114,7 @@ class CategoriaViewSet(TenantViewSet):
 class ProdutoViewSet(TenantViewSet):
     serializer_class = ProdutoSerializer
     search_fields = ("nome", "codigo", "codigo_barras")
+    filter_backends = [SearchFilter]
     def get_queryset(self):
         return Produto.objects.filter(empresa=self.get_empresa(), ativo=True).select_related("categoria").order_by("nome")
 
@@ -491,7 +493,7 @@ class PedidosWebView(TenantAPIView):
         return Response([{
             "id": pedido.pk, "codigo_publico": str(pedido.codigo_publico),
             "cliente_nome": pedido.cliente_nome, "cliente_telefone": pedido.cliente_telefone,
-            "estado": pedido.estado, "subtotal": str(pedido.subtotal), "total": str(pedido.total),
+            "estado": pedido.estado, "subtotal": str(pedido.subtotal), "frete": str(pedido.frete), "total": str(pedido.total),
             "endereco_entrega": pedido.endereco_entrega,
             "entrega_solicitada_em": pedido.entrega_solicitada_em,
             "criado_em": pedido.criado_em, "expira_em": pedido.expira_em,
@@ -553,11 +555,12 @@ class PedidosWebView(TenantAPIView):
             produto = next(item[0] for item in calculados if item[0].pk == produto_id)
             if produto.estoque_atual < quantidade:
                 raise ValidationError({"itens": f"Estoque insuficiente para {produto.nome}."})
+        frete = empresa.frete_padrao if endereco_entrega else Decimal("0.00")
         pedido = PedidoWeb.objects.create(
             empresa=empresa, cliente_nome=nome, cliente_telefone=telefone,
             endereco_entrega=endereco_entrega, entrega_solicitada_em=entrega_solicitada_em,
             estado=PedidoWeb.Estado.AGUARDANDO_CLIENTE, subtotal=subtotal,
-            total=subtotal, desconto=Decimal("0"), criado_por=request.user,
+            total=subtotal + frete, frete=frete, desconto=Decimal("0"), criado_por=request.user,
             expira_em=timezone.now() + timedelta(days=7),
         )
         for produto, quantidade, linha_total in calculados:
@@ -571,7 +574,7 @@ class PedidosWebView(TenantAPIView):
         )
         return Response({
             "id": pedido.pk, "codigo_publico": str(pedido.codigo_publico),
-            "estado": pedido.estado, "total": str(pedido.total), "public_url": public_url,
+            "estado": pedido.estado, "frete": str(pedido.frete), "total": str(pedido.total), "public_url": public_url,
         }, status=status.HTTP_201_CREATED)
 
 

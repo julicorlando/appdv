@@ -3,10 +3,12 @@ import secrets
 import uuid
 from django.conf import settings
 from django.db import models
+from django.core.validators import MinValueValidator
 from django.utils import timezone
 
 
 class Empresa(models.Model):
+    frete_padrao = models.DecimalField(max_digits=12, decimal_places=2, default=0, validators=[MinValueValidator(0)])
     """Tenant isolado: cada empresa possui catálogo, estoque, caixa e vendas próprios."""
     nome = models.CharField(max_length=180)
     cnpj = models.CharField(max_length=14, blank=True, db_index=True)
@@ -122,6 +124,7 @@ class Caixa(models.Model):
 
 
 class Venda(models.Model):
+    frete = models.DecimalField(max_digits=12, decimal_places=2, default=0, validators=[MinValueValidator(0)])
     class Estado(models.TextChoices):
         CONCLUIDA = "CONCLUIDA", "Concluída"
         CANCELADA = "CANCELADA", "Cancelada"
@@ -263,6 +266,7 @@ class ItemContagem(models.Model):
 
 
 class PedidoWeb(models.Model):
+    frete = models.DecimalField(max_digits=12, decimal_places=2, default=0, validators=[MinValueValidator(0)])
     """Pedido criado no PDV e confirmado pelo cliente antes da venda no caixa."""
     class Estado(models.TextChoices):
         AGUARDANDO_CLIENTE = "AGUARDANDO_CLIENTE", "Aguardando cliente"

@@ -24,5 +24,5 @@ class VendaSerializer(serializers.ModelSerializer):
     class Meta:
         model = Venda
         fields = ("id", "idempotency_key", "caixa", "operador", "cliente", "estado", "subtotal",
-                  "desconto", "total", "realizada_em", "sincronizada_em", "itens")
+                  "desconto", "frete", "total", "realizada_em", "sincronizada_em", "itens")
         read_only_fields = fields

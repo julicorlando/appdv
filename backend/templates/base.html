@@ -18,6 +18,7 @@
 <div class="nav-groups">
 <a class="nav-home" href="{% url 'empresa-dashboard' empresa.id %}"{% if request.resolver_match.url_name == "empresa-dashboard" %} aria-current="page"{% endif %}>Visão geral</a>
 <details class="nav-group" {% if request.resolver_match.url_name == "empresa-vendas" or request.resolver_match.url_name == "empresa-pedidos-web" %}open{% endif %}><summary>Operação</summary><div class="nav-menu">
+<a href="{% url 'caixa-web' empresa.id %}">Caixa web</a>
 <a href="{% url 'empresa-vendas' empresa.id %}"{% if request.resolver_match.url_name == "empresa-vendas" %} aria-current="page"{% endif %}>Vendas</a>
 <a href="{% url 'empresa-pedidos-web' empresa.id %}"{% if request.resolver_match.url_name == "empresa-pedidos-web" %} aria-current="page"{% endif %}>Pedidos web{% if pedidos_confirmados %} <span class="nav-count">{{ pedidos_confirmados }}</span>{% endif %}</a>
 </div></details>

@@ -7,7 +7,8 @@
 <form method="post" enctype="multipart/form-data">{% csrf_token %}
 <label for="{{ form.logo.id_for_label }}">Selecionar logo (PNG, JPG ou WebP; até 2 MB)</label>
 {{ form.logo }}{% for error in form.logo.errors %}<p class="message error">{{ error }}</p>{% endfor %}
-<button type="submit">Salvar logo</button>
+{% if form.frete_padrao %}<label for="{{ form.frete_padrao.id_for_label }}">{{ form.frete_padrao.label }}</label>{{ form.frete_padrao }}{{ form.frete_padrao.errors }}<p>O valor vale para novos pedidos com endereço de entrega. Retirada não cobra frete.</p>{% endif %}
+<button type="submit">Salvar configurações</button>
 </form>
 <p>A marca ApPdv é fixa. A logo enviada aqui aparece no cupom da empresa selecionada.</p>
 </section>

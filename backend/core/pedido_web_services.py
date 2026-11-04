@@ -41,7 +41,7 @@ def finalizar_pedido_web(*, empresa, usuario, pedido_id, caixa_id, pagamentos):
         ],
         "pagamentos": pagamentos,
     }
-    venda, _ = registrar_venda(empresa=empresa, usuario=usuario, dados=payload)
+    venda, _ = registrar_venda(empresa=empresa, usuario=usuario, dados=payload, frete=pedido.frete)
     pedido.estado = PedidoWeb.Estado.CONCLUIDO
     pedido.venda = venda
     pedido.save(update_fields=("estado", "venda"))

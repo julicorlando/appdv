@@ -24,6 +24,7 @@ urlpatterns = [
     path("master/empresas/<int:empresa_id>/status/", web.master_status_empresa, name="master-status-empresa"),
     path("master/empresas/<int:empresa_id>/membros/adicionar/", web.master_adicionar_membro, name="master-adicionar-membro"),
     path("empresa/<int:empresa_id>/", web.empresa_dashboard, name="empresa-dashboard"),
+    path("empresa/<int:empresa_id>/caixa/", web.caixa_web, name="caixa-web"),
     path("empresa/<int:empresa_id>/produtos/", web.empresa_produtos, name="empresa-produtos"),
     path("empresa/<int:empresa_id>/compras/", web.empresa_compras, name="empresa-compras"),
     path("empresa/<int:empresa_id>/clientes/", web.empresa_clientes, name="empresa-clientes"),
