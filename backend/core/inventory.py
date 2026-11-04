@@ -184,11 +184,16 @@ def iniciar_contagem(*, contagem, usuario):
 
 
 @transaction.atomic
-def concluir_contagem(*, contagem, usuario, contagens):
+def concluir_contagem(*, contagem, usuario, contagens, recontagem=False):
     contagem = InventarioContagem.objects.select_for_update().get(pk=contagem.pk)
     if contagem.estado != InventarioContagem.Estado.ABERTO:
         raise ValidationError({"inventario": "A contagem não está aberta."})
-    items = list(contagem.itens.select_related("produto").order_by("pk"))
+    if recontagem != contagem.em_recontagem:
+        raise ValidationError({"inventario": "Atualize a página para usar a etapa atual."})
+    queryset = contagem.itens.select_related("produto").order_by("produto_id")
+    if contagem.em_recontagem:
+        queryset = queryset.exclude(diferenca=0)
+    items = list(queryset)
     if not items:
         raise ValidationError({"inventario": "A contagem está sem produtos."})
     checked = {}
@@ -202,20 +207,27 @@ def concluir_contagem(*, contagem, usuario, contagens):
         physical = checked[item.pk]
         system_balance = product.estoque_atual
         delta = physical - system_balance
-        product.estoque_atual = physical
-        product.save(update_fields=("estoque_atual", "atualizado_em"))
+        if not contagem.em_recontagem:
+            item.primeira_quantidade = physical
+        elif delta:
+            product.estoque_atual = physical
+            product.save(update_fields=("estoque_atual", "atualizado_em"))
         item.saldo_sistema = system_balance
         item.quantidade_contada = physical
         item.diferenca = delta
         item.contado_por = usuario
         item.contado_em = timezone.now()
-        item.save(update_fields=("saldo_sistema", "quantidade_contada", "diferenca", "contado_por", "contado_em"))
-        if delta:
+        item.save(update_fields=("primeira_quantidade", "saldo_sistema", "quantidade_contada", "diferenca", "contado_por", "contado_em"))
+        if delta and contagem.em_recontagem:
             MovimentacaoEstoque.objects.create(
                 empresa=contagem.empresa, produto=product,
                 tipo=MovimentacaoEstoque.Tipo.AJUSTE, quantidade=delta,
                 referencia=f"Contagem preventiva #{contagem.pk}", operador=usuario,
             )
+    if not contagem.em_recontagem and contagem.itens.exclude(diferenca=0).exists():
+        contagem.em_recontagem = True
+        contagem.save(update_fields=("em_recontagem",))
+        return contagem
     contagem.estado = InventarioContagem.Estado.CONCLUIDO
     contagem.concluido_em = timezone.now()
     contagem.save(update_fields=("estado", "concluido_em"))

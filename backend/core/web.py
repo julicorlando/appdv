@@ -501,7 +501,13 @@ def empresa_inventario(request, empresa_id):
     if request.method == "POST":
         acao = request.POST.get("acao")
         try:
-            if acao == "gerar":
+            if acao == "catalogo_demo":
+                if membro.papel != MembroEmpresa.Papel.ADMIN:
+                    raise PermissionDenied("Somente o administrador pode carregar produtos de teste.")
+                from .catalogo_demo import carregar_catalogo_demo
+                criados = carregar_catalogo_demo(membro.empresa)
+                messages.success(request, f"Catálogo de teste: {criados} novos produtos cadastrados.")
+            elif acao == "gerar":
                 quantidade = int(request.POST.get("quantidade", "5"))
                 por_contagem = int(request.POST.get("itens_por_contagem", "20"))
                 if quantidade < 1 or por_contagem < 1 or quantidade > 100 or por_contagem > 200:
@@ -522,7 +528,16 @@ def empresa_inventario(request, empresa_id):
                 messages.success(
                     request, f"Contagem do setor {contagem.setor} iniciada. As vendas desses itens ficam pausadas até concluir."
                 )
-            elif acao == "concluir":
+            elif acao == "revisar":
+                if membro.papel != MembroEmpresa.Papel.ADMIN:
+                    raise PermissionDenied("A revisão é exclusiva do administrador.")
+                InventarioContagem.objects.filter(
+                    pk=request.POST.get("contagem"), empresa=membro.empresa,
+                    estado=InventarioContagem.Estado.CONCLUIDO,
+                    em_recontagem=True, revisada_em__isnull=True,
+                ).update(revisada_em=timezone.now())
+                messages.success(request, "Divergência marcada como revisada.")
+            elif acao in ("concluir", "recontar"):
                 contagem = get_object_or_404(
                     InventarioContagem, pk=request.POST.get("contagem"),
                     empresa=membro.empresa,
@@ -532,8 +547,14 @@ def empresa_inventario(request, empresa_id):
                     for key, value in request.POST.items()
                     if key.startswith("contado_")
                 }
-                concluir_contagem(contagem=contagem, usuario=request.user, contagens=valores)
-                messages.success(request, "Contagem concluída; diferenças aplicadas e registradas no histórico de estoque.")
+                resultado = concluir_contagem(
+                    contagem=contagem, usuario=request.user, contagens=valores,
+                    recontagem=acao == "recontar",
+                )
+                if resultado.estado == InventarioContagem.Estado.ABERTO:
+                    messages.warning(request, "Reconte apenas os itens divergentes na próxima etapa.")
+                else:
+                    messages.success(request, "Contagem concluída e salva no histórico.")
             else:
                 messages.error(request, "Ação de inventário inválida.")
         except Exception as exc:
@@ -543,7 +564,14 @@ def empresa_inventario(request, empresa_id):
     contagens = InventarioContagem.objects.filter(empresa=membro.empresa).prefetch_related(
         "itens__produto"
     ).order_by("-data_programada", "-criado_em")
+    alertas = contagens.none()
+    if membro.papel == MembroEmpresa.Papel.ADMIN:
+        alertas = contagens.filter(
+            estado=InventarioContagem.Estado.CONCLUIDO, em_recontagem=True,
+            revisada_em__isnull=True,
+        ).filter(pk__in=ItemContagem.objects.filter(contagem__empresa=membro.empresa).exclude(diferenca=0).values("contagem_id"))
     return render(request, "empresa_inventario.html", {
+        "alertas": alertas,
         "empresa": membro.empresa, "membro": membro,
         "programadas": contagens.filter(estado=InventarioContagem.Estado.PROGRAMADO),
         "abertas": contagens.filter(estado=InventarioContagem.Estado.ABERTO),

@@ -225,6 +225,8 @@ class MovimentacaoEstoque(models.Model):
 
 
 class InventarioContagem(models.Model):
+    em_recontagem = models.BooleanField(default=False)
+    revisada_em = models.DateTimeField(null=True, blank=True)
     class Estado(models.TextChoices):
         PROGRAMADO = "PROGRAMADO", "Programado"
         ABERTO = "ABERTO", "Em contagem"
@@ -251,6 +253,7 @@ class InventarioContagem(models.Model):
 
 
 class ItemContagem(models.Model):
+    primeira_quantidade = models.DecimalField(max_digits=14, decimal_places=3, null=True, blank=True)
     contagem = models.ForeignKey(InventarioContagem, on_delete=models.CASCADE, related_name="itens")
     produto = models.ForeignKey(Produto, on_delete=models.PROTECT, related_name="contagens")
     saldo_sistema = models.DecimalField(max_digits=14, decimal_places=3)
