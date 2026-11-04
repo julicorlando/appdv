@@ -688,3 +688,31 @@ class OrcamentosView(TenantAPIView):
         empresa, membro = self.get_empresa(request)
         obj, criado = salvar_orcamento(empresa, membro, request.data)
         return Response(dados_orcamento(obj), status=201 if criado else 200)
+
+
+class AutorizarDescontoView(TenantAPIView):
+    throttle_scope = 'autorizar_desconto'
+
+    def get_throttles(self):
+        from rest_framework.throttling import UserRateThrottle
+        class ApprovalThrottle(UserRateThrottle):
+            scope = 'autorizar_desconto'
+            rate = '10/min'
+        return [ApprovalThrottle()]
+
+    def post(self, request):
+        import uuid
+        from django.contrib.auth import authenticate
+        from .models import AprovacaoDesconto
+        from .discount_policy import fingerprint
+        empresa, membro = self.get_empresa(request)
+        approver = authenticate(request=request, username=request.data.get('usuario', ''), password=request.data.get('senha', ''))
+        if not approver or not approver.is_active or not MembroEmpresa.objects.filter(empresa=empresa, usuario=approver, ativo=True, papel__in=['ADMIN', 'GERENTE']).exists():
+            raise PermissionDenied('Credenciais inválidas ou sem permissão nesta empresa.')
+        try:
+            key = uuid.UUID(str(request.data.get('chave')))
+        except (TypeError, ValueError):
+            raise ValidationError({'chave': 'Informe a chave da operação.'})
+        obj = AprovacaoDesconto.objects.create(empresa=empresa, operador=request.user, aprovador=approver,
+            chave_operacao=key, resumo_itens=fingerprint(request.data.get('itens', [])))
+        return Response({'codigo': str(obj.codigo)}, status=201)

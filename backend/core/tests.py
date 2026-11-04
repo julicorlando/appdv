@@ -257,7 +257,7 @@ class DesktopCustomerQuoteFlowTests(TestCase):
         response = self.api.get(f"/api/v1/orcamentos/{quote['id']}/", HTTP_X_EMPRESA_ID=str(other.pk))
         self.assertEqual(response.status_code, 404)
         payload['chave'] = str(uuid.uuid4())
-        payload['itens'][0]['desconto'] = '1'
+        payload['itens'][0]['desconto'] = '1.01'
         response = self.api.post('/api/v1/orcamentos/', payload, format='json', **self.headers)
         self.assertEqual(response.status_code, 400)
 
@@ -293,12 +293,16 @@ class DesktopCustomerQuoteFlowTests(TestCase):
         self.member.save()
         cash = self.api.post('/api/v1/caixas/abrir/', {'dispositivo_id': 'desktop'}, format='json', **self.headers).data
         payload = {'idempotency_key': str(uuid.uuid4()), 'caixa': cash['id'], 'cliente': self.customer['id'], 'itens': [{'produto': self.product.pk, 'quantidade': '2', 'desconto': '2'}], 'pagamentos': [{'meio': 'PIX', 'valor': '18'}]}
+        approved = self.api.post('/api/v1/descontos/autorizar/', {'usuario': 'desktop-cashier', 'senha': 'test-only', 'chave': payload['idempotency_key'], 'itens': payload['itens']}, format='json', **self.headers)
+        self.assertEqual(approved.status_code, 201, approved.data)
+        payload['autorizacao_desconto'] = approved.data['codigo']
         sale = self.api.post('/api/v1/vendas/', payload, format='json', **self.headers)
         self.assertEqual(sale.status_code, 201, sale.data)
         self.assertEqual(Decimal(sale.data['total']), Decimal('18'))
         payload['idempotency_key'] = str(uuid.uuid4())
         payload['itens'][0]['desconto'] = '20'
         payload['pagamentos'] = []
+        payload['autorizacao_desconto'] = self.api.post('/api/v1/descontos/autorizar/', {'usuario': 'desktop-cashier', 'senha': 'test-only', 'chave': payload['idempotency_key'], 'itens': payload['itens']}, format='json', **self.headers).data['codigo']
         sale = self.api.post('/api/v1/vendas/', payload, format='json', **self.headers)
         self.assertEqual(sale.status_code, 201, sale.data)
         self.assertEqual(Decimal(sale.data['total']), 0)
@@ -319,3 +323,38 @@ class UnknownCPFResponseTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content, b'null')
         self.assertIsNone(response.json())
+
+
+class DiscountApprovalTests(TestCase):
+    setUp = DesktopCustomerQuoteFlowTests.setUp
+    def test_cashier_five_percent_allowed_and_above_requires_manager(self):
+        manager = get_user_model().objects.create_user('discount-manager', password='test-only')
+        MembroEmpresa.objects.create(empresa=self.company, usuario=manager, papel='GERENTE')
+        cash = self.api.post('/api/v1/caixas/abrir/', {'dispositivo_id': 'approval'}, format='json', **self.headers).data
+        payload = {'idempotency_key': str(uuid.uuid4()), 'caixa': cash['id'], 'cliente': self.customer['id'], 'itens': [{'produto': self.product.pk, 'quantidade': '10', 'desconto': '5'}], 'pagamentos': [{'meio': 'PIX', 'valor': '95'}]}
+        self.assertEqual(self.api.post('/api/v1/vendas/', payload, format='json', **self.headers).status_code, 201)
+        payload['idempotency_key'] = str(uuid.uuid4())
+        payload['itens'][0]['desconto'] = '5.01'
+        payload['pagamentos'][0]['valor'] = '94.99'
+        self.assertEqual(self.api.post('/api/v1/vendas/', payload, format='json', **self.headers).status_code, 400)
+        approve = {'usuario': manager.username, 'senha': 'wrong', 'chave': payload['idempotency_key'], 'itens': payload['itens']}
+        self.assertEqual(self.api.post('/api/v1/descontos/autorizar/', approve, format='json', **self.headers).status_code, 403)
+        approve['senha'] = 'test-only'
+        response = self.api.post('/api/v1/descontos/autorizar/', approve, format='json', **self.headers)
+        self.assertEqual(response.status_code, 201, response.data)
+        payload['autorizacao_desconto'] = response.data['codigo']
+        sale = self.api.post('/api/v1/vendas/', payload, format='json', **self.headers)
+        self.assertEqual(sale.status_code, 201, sale.data)
+        self.assertEqual(self.api.post('/api/v1/vendas/', payload, format='json', **self.headers).status_code, 200)
+        payload['idempotency_key'] = str(uuid.uuid4())
+        self.assertEqual(self.api.post('/api/v1/vendas/', payload, format='json', **self.headers).status_code, 400)
+        from .models import AprovacaoDesconto
+        self.assertEqual(AprovacaoDesconto.objects.get(codigo=response.data['codigo']).venda_id, sale.data['id'])
+
+    def test_offline_price_mismatch_does_not_change_stock(self):
+        cash = self.api.post('/api/v1/caixas/abrir/', {'dispositivo_id': 'offline'}, format='json', **self.headers).data
+        payload = {'idempotency_key': str(uuid.uuid4()), 'caixa': cash['id'], 'itens': [{'produto': self.product.pk, 'quantidade': '1', 'preco_esperado': '9'}], 'pagamentos': [{'meio': 'PIX', 'valor': '10'}]}
+        response = self.api.post('/api/v1/vendas/', payload, format='json', **self.headers)
+        self.assertEqual(response.status_code, 400)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.estoque_atual, Decimal('100'))

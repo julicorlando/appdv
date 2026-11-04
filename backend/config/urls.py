@@ -7,7 +7,7 @@ from core.api import (
     AbrirCaixaView, CaixaResumoView, ClientesView, ContasPagarView, ContasReceberView, CategoriaViewSet, CriarTokenView, DashboardEmpresaAPIView, EmpresaInfoView, FecharCaixaView, MovimentacaoCaixaView,
     MinhasEmpresasView, PedidosWebView, FinalizarPedidoWebView, ProdutoViewSet, VendaViewSet,
 )
-from core.api import ClienteCPFView, OrcamentosView
+from core.api import ClienteCPFView, OrcamentosView, AutorizarDescontoView
 from core import web
 
 router = DefaultRouter()
@@ -49,6 +49,7 @@ urlpatterns = [
     path("api/v1/minhas-empresas/", MinhasEmpresasView.as_view(), name="minhas-empresas"),
     path("api/v1/empresa/", EmpresaInfoView.as_view(), name="empresa-info"),
     path("api/v1/empresa/resumo/", DashboardEmpresaAPIView.as_view(), name="empresa-resumo"),
+    path("api/v1/descontos/autorizar/", AutorizarDescontoView.as_view(), name="desconto-autorizar"),
     path("api/v1/clientes/cpf/", ClienteCPFView.as_view(), name="cliente-cpf"),
     path("api/v1/orcamentos/", OrcamentosView.as_view(), name="orcamentos"),
     path("api/v1/orcamentos/<int:orcamento_id>/", OrcamentosView.as_view(), name="orcamento-detalhe"),

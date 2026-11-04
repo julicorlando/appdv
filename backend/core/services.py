@@ -92,13 +92,11 @@ def registrar_venda(*, empresa, usuario, dados, frete=Decimal("0.00")):
                 raise ValueError
             quantidade_estoque = (quantidade * fator).quantize(Decimal("0.001"))
             desconto = Decimal(str(linha.get("desconto", "0")))
+            if "preco_esperado" in linha and Decimal(str(linha['preco_esperado'])) != produto.preco_venda:
+                raise ValidationError({'itens': f'Preço de {produto.nome} mudou. Venda pendente de revisão.'})
             bruto = (produto.preco_venda * quantidade).quantize(Decimal("0.01"))
             if not desconto.is_finite() or desconto < 0 or desconto > bruto:
                 raise ValueError
-            if desconto > 0 and membro.papel == MembroEmpresa.Papel.CAIXA:
-                raise ValidationError({
-                    "desconto": "Descontos em venda exigem perfil de gerente ou administrador."
-                })
         except Produto.DoesNotExist:
             raise ValidationError({"itens": "Produto inexistente ou indisponível nesta empresa."})
         except (KeyError, ValueError, TypeError, InvalidOperation):
@@ -118,6 +116,8 @@ def registrar_venda(*, empresa, usuario, dados, frete=Decimal("0.00")):
             raise ValidationError({"itens": f"Estoque insuficiente para {produto.nome}."})
 
     desconto_total = sum((item[2] for item in itens_calculados), Decimal("0"))
+    from .discount_policy import validar_desconto
+    aprovacao = validar_desconto(empresa, usuario, dados, subtotal, desconto_total)
     total = subtotal - desconto_total + frete
     valores_pagamento = []
     soma_pagamentos = Decimal("0")
@@ -195,6 +195,9 @@ def registrar_venda(*, empresa, usuario, dados, frete=Decimal("0.00")):
             valor_original=credito, saldo=credito, vencimento=vencimento,
             criado_por=usuario,
         )
+    if aprovacao:
+        aprovacao.venda = venda
+        aprovacao.save(update_fields=['venda'])
     return venda, True
 
 

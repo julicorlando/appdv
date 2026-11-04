@@ -61,7 +61,7 @@ def salvar_orcamento(empresa, membro, dados):
             if not quantidade.is_finite() or quantidade <= 0 or quantidade.as_tuple().exponent < -3 or not desconto.is_finite():
                 raise ValueError
             bruto = (produto.preco_venda * quantidade).quantize(Decimal('.01'))
-            if desconto < 0 or desconto > bruto or produto.pk in vistos or (desconto > 0 and membro.papel == 'CAIXA'):
+            if desconto < 0 or desconto > bruto or produto.pk in vistos:
                 raise ValueError
             valor = bruto - desconto
             if valor > Decimal('9999999999.99'):
@@ -75,6 +75,9 @@ def salvar_orcamento(empresa, membro, dados):
         total += valor
     if total > Decimal('9999999999.99'):
         raise ValidationError({'total': 'Total acima do limite permitido.'})
+    from .discount_policy import validar_desconto
+    discounts = sum((Decimal(i['desconto']) for i in itens), Decimal('0'))
+    validar_desconto(empresa, membro.usuario, dados, total + discounts, discounts, 'chave')
     obj = Orcamento.objects.create(empresa=empresa, cliente=cliente, operador=membro.usuario,
         chave=chave, validade=validade, itens=itens, total=total)
     return obj, True

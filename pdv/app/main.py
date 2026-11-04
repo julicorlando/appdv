@@ -11,7 +11,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from PySide6.QtGui import QDesktopServices, QIcon, QPixmap
-from PySide6.QtCore import QUrl, QTimer, Qt, QSettings
+from PySide6.QtCore import QUrl, QTimer, Qt, QSettings, QThread, Signal
 import requests
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout,
@@ -24,6 +24,7 @@ from app.local_store import LocalStore
 from app.payments import PaymentDialog
 from app.quotes import quote_html
 from app.discounts import distribute_discount
+from app.customers import normalize_cpf
 
 
 def asset_path(name):
@@ -171,6 +172,33 @@ class AdminPanelDialog(QDialog):
         layout.addWidget(close)
 
 
+class PendingSyncWorker(QThread):
+    result = Signal(str, str, object)
+
+    def __init__(self, api, rows, parent=None):
+        super().__init__(parent)
+        self.rows = rows
+        self.client = ArmazemAPI(api.base_url, empresa_id=api.empresa_id, timeout=4)
+        self.client.session.headers.update(api.session.headers)
+        self.client.refresh_token = api.refresh_token
+
+    def run(self):
+        for key, raw in self.rows:
+            payload = json.loads(raw)
+            try:
+                if payload.get('cliente_offline'):
+                    customer = payload['cliente_offline']
+                    saved = self.client.cadastrar_cliente_cpf(customer['documento'], customer['nome'], customer.get('telefone', ''))
+                    payload['cliente'] = saved['id']
+                response = self.client.registrar_venda(payload)
+                self.result.emit(key, '', response)
+            except (requests.ConnectionError, requests.Timeout):
+                self.result.emit(key, 'Sem conexão; nova tentativa automática.', None)
+                break
+            except Exception as exc:
+                self.result.emit(key, str(exc), None)
+
+
 class PDVWindow(QMainWindow):
     def __init__(self, api):
         super().__init__()
@@ -183,6 +211,10 @@ class PDVWindow(QMainWindow):
         self.company_info = {}
         self.selected_customer = None
         self.loaded_quote = None
+        self.sale_key = str(uuid.uuid4())
+        self.discount_approval = None
+        self.online = True
+        self.sync_worker = None
         self.total_discount = None
         self.quote_save_key = None
         self.checkout_payload = None
@@ -194,6 +226,9 @@ class PDVWindow(QMainWindow):
         self.resize(1120, 740)
         self._build()
         self._select_company()
+        self.sync_timer = QTimer(self)
+        self.sync_timer.timeout.connect(self._sync_pending)
+        self.sync_timer.start(15000)
 
     def _build(self):
         self.setStyleSheet("""
@@ -287,6 +322,7 @@ class PDVWindow(QMainWindow):
         product_layout.addWidget(QLabel("Consulta de estoque e preço"))
         detail_rows = QHBoxLayout()
         logo = QLabel()
+        self.company_logo_label = logo
         logo_pixmap = QPixmap(asset_path("appdv-logo-web.png"))
         if not logo_pixmap.isNull():
             logo.setPixmap(logo_pixmap.scaled(170, 90, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
@@ -329,6 +365,9 @@ class PDVWindow(QMainWindow):
         self.discount_cart_item = QPushButton("Desconto total (R$ / %)")
         self.discount_cart_item.clicked.connect(self._discount_cart_item)
         self.discount_cart_item.setEnabled(False)
+        self.pending_button = QPushButton("Sincronização")
+        self.pending_button.clicked.connect(self._show_pending)
+        cart_actions.addWidget(self.pending_button)
         self.hold_cart = QPushButton("Suspender")
         self.hold_cart.clicked.connect(self._suspend_sale)
         self.resume_cart = QPushButton("Retomar")
@@ -404,13 +443,15 @@ class PDVWindow(QMainWindow):
         self.checkout_payload = None
         self.tenant_id = str(self.company.currentData())
         self.tenant_role = self.company_roles.get(self.tenant_id, "CAIXA")
-        self.discount_cart_item.setEnabled(self.tenant_role in ("ADMIN", "GERENTE"))
+        self.discount_cart_item.setEnabled(True)
         self.admin_button.setVisible(self.tenant_role in ("ADMIN", "GERENTE"))
         self.api.selecionar_empresa(self.tenant_id)
         try:
             self.company_info = self.api.empresa_info()
+            self.store.save_company(self.tenant_id, self.company_info)
         except Exception:
-            self.company_info = {"nome": self.company.currentText(), "logo_data_url": ""}
+            self.company_info = self.store.company(self.tenant_id) or {"nome": self.company.currentText(), "logo_data_url": ""}
+        self._update_company_logo()
         self.cart.clear()
         saldo, accepted = QInputDialog.getDouble(
             self, "Abertura do caixa", "Saldo inicial em dinheiro (R$):",
@@ -430,6 +471,7 @@ class PDVWindow(QMainWindow):
         attempt = self.store.checkout_attempt(self.tenant_id, self.api.username)
         if attempt:
             self.checkout_payload = attempt['payload']
+            self.sale_key = self.checkout_payload["idempotency_key"]
             self.selected_customer = attempt.get('cliente')
             self.loaded_quote = self.checkout_payload.get('orcamento')
             self.last_payments = self.checkout_payload['pagamentos']
@@ -443,9 +485,11 @@ class PDVWindow(QMainWindow):
             return
         try:
             self.products = self.api.produtos()
+            self.online = True
             self.store.save_products(self.tenant_id, self.products)
             self.status.setText("Catálogo atualizado · online")
         except Exception:
+            self.online = False
             self.products = self.store.list_products(self.tenant_id)
             self.status.setText("Offline · catálogo em cache")
         self._render_catalog()
@@ -511,7 +555,7 @@ class PDVWindow(QMainWindow):
         product_id = int(product["id"])
         available = Decimal(str(product.get("estoque_atual", "0")))
         quantity = self.cart.get(product_id, {}).get("quantidade", Decimal("0")) + Decimal("1")
-        if quantity > available:
+        if quantity * Decimal(str(product.get("fator_conversao", "1"))) > available:
             QMessageBox.warning(
                 self, "Estoque", "A quantidade excede o saldo disponível no último catálogo."
             )
@@ -617,7 +661,7 @@ class PDVWindow(QMainWindow):
             return
         product_id, item = entries[row]
         product = item["produto"]
-        available = Decimal(str(product.get("estoque_atual", "0")))
+        available = Decimal(str(product.get("estoque_atual", "0"))) / Decimal(str(product.get("fator_conversao", "1")))
         quantity, accepted = QInputDialog.getDouble(
             self, "Alterar quantidade", product["nome"],
             float(item["quantidade"]), 0.001, float(available), 3,
@@ -639,9 +683,6 @@ class PDVWindow(QMainWindow):
         if self.checkout_payload:
             QMessageBox.warning(self, "Venda pendente", "Finalize a tentativa pendente antes de alterar o carrinho.")
             return
-        if self.tenant_role not in ("ADMIN", "GERENTE"):
-            QMessageBox.warning(self, "Desconto", "Descontos exigem perfil de gerente ou administrador.")
-            return
         if not self.cart:
             return
         mode, ok = QInputDialog.getItem(self, "Desconto no total", "Tipo de desconto:", ["R$", "%"], 0, False)
@@ -651,7 +692,16 @@ class PDVWindow(QMainWindow):
         value, ok = QInputDialog.getDouble(self, "Desconto no total", "Percentual (%):" if mode == '%' else "Valor do desconto (R$):", 0, 0, 100 if mode == '%' else float(gross), 2)
         if not ok:
             return
+        previous_mode = self.total_discount
+        previous_values = [item.get('desconto', Decimal('0')) for item in self.cart.values()]
         self.total_discount = (mode, Decimal(str(value)))
+        self._render_cart()
+        if not self._ensure_discount_approval(self.sale_key, self._cart_lines()):
+            self.total_discount = previous_mode
+            for item, discount in zip(self.cart.values(), previous_values):
+                item['desconto'] = discount
+            self._render_cart()
+            return
         # A conversão exigirá salvar novo orçamento se suas condições forem alteradas.
         self._render_cart()
 
@@ -733,23 +783,36 @@ class PDVWindow(QMainWindow):
         if not accepted:
             return None
         try:
-            customer = self.api.cliente_cpf(cpf.strip())
+            cpf = normalize_cpf(cpf.strip())
+            offline = False
+            try:
+                customer = self.api.cliente_cpf(cpf)
+                self.online = True
+            except (requests.ConnectionError, requests.Timeout):
+                offline = True
+                self.online = False
+                customer = self.store.customer(self.tenant_id, cpf)
             if customer:
-                answer = QMessageBox.question(self, "Cliente encontrado", f"Utilizar o cadastro de {customer['nome']}?")
-                if answer != QMessageBox.StandardButton.Yes:
+                if QMessageBox.question(self, "Cliente encontrado", f"Utilizar o cadastro de {customer['nome']}?" + (" (cache local)" if offline else "")) != QMessageBox.StandardButton.Yes:
                     return None
             else:
-                name, accepted = QInputDialog.getText(self, "Novo cliente", "CPF não cadastrado. Nome completo:")
+                name, accepted = QInputDialog.getText(self, "Novo cliente", "CPF não cadastrado. Nome completo:" + (" (cadastro local pendente)" if offline else ""))
                 if not accepted or not name.strip():
                     return None
                 phone, accepted = QInputDialog.getText(self, "Novo cliente", "Telefone (opcional):")
                 if not accepted:
                     return None
-                customer = self.api.cadastrar_cliente_cpf(cpf.strip(), name.strip(), phone.strip())
+                customer = {'id': None, 'nome': name.strip(), 'documento': cpf, 'telefone': phone.strip(), 'limite_credito': '0', 'offline': True}
+                if not offline:
+                    try:
+                        customer = self.api.cadastrar_cliente_cpf(cpf, name.strip(), phone.strip())
+                    except (requests.ConnectionError, requests.Timeout):
+                        self.online = False
+            self.store.save_customer(self.tenant_id, customer)
             self.selected_customer = customer
             return customer
         except Exception as exc:
-            QMessageBox.warning(self, "Cliente", f"Não foi possível identificar o cliente. Confira o CPF e a conexão.\n{exc}")
+            QMessageBox.warning(self, "Cliente", str(exc))
             return None
 
     def _show_saved_quote(self, quote):
@@ -779,6 +842,10 @@ class PDVWindow(QMainWindow):
         if not self.quote_save_key or self.quote_save_key[0] != signature:
             self.quote_save_key = (signature, str(uuid.uuid4()))
         payload['chave'] = self.quote_save_key[1]
+        if not self._ensure_discount_approval(payload['chave'], payload['itens']):
+            return
+        if self.discount_approval:
+            payload['autorizacao_desconto'] = self.discount_approval[1]
         try:
             quote = self.api.salvar_orcamento(payload)
             self.loaded_quote = quote["id"]
@@ -848,6 +915,11 @@ class PDVWindow(QMainWindow):
             return
         if not self.cart:
             return
+        for item in self.cart.values():
+            product = item['produto']
+            if item['quantidade'] * Decimal(str(product.get('fator_conversao', '1'))) > Decimal(str(product.get('estoque_atual', '0'))):
+                QMessageBox.warning(self, 'Estoque local', f"Quantidade acima do saldo conhecido de {product['nome']}.")
+                return
         total = sum(
             ((Decimal(str(item["produto"]["preco_venda"])) * item["quantidade"]).quantize(Decimal("0.01"))
              - Decimal(str(item.get("desconto", "0")))
@@ -864,18 +936,19 @@ class PDVWindow(QMainWindow):
             gross = sum(((Decimal(str(item['produto']['preco_venda'])) * item['quantidade']).quantize(Decimal('.01')) for item in self.cart.values()), Decimal('0'))
             discount = sum((Decimal(str(item.get('desconto', '0'))) for item in self.cart.values()), Decimal('0'))
             return gross, discount
-        dialog.configure_discount(change_discount, self.tenant_role in ('ADMIN', 'GERENTE'))
+        dialog.configure_discount(change_discount, True)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         payments, credit = dialog.payments, dialog.credit
         total = dialog.total
         self.last_payments = payments
-        key = str(uuid.uuid4())
+        key = self.sale_key
         payload = {
             "idempotency_key": key,
             "caixa": self.cash_id,
             "observacao": "",
             "cliente": customer_id,
+            "operador_local": self.api.username,
             "credito": str(credit),
             "itens": [
                 {
@@ -886,6 +959,17 @@ class PDVWindow(QMainWindow):
             ],
             "pagamentos": payments,
         }
+        if customer.get('offline'):
+            payload['cliente_offline'] = customer
+        if credit > 0 and not self.online:
+            QMessageBox.warning(self, "Venda a prazo", "Venda a prazo exige conexão para verificar o limite de crédito.")
+            return
+        if not self._ensure_discount_approval(key, payload['itens']):
+            return
+        if self.discount_approval:
+            payload['autorizacao_desconto'] = self.discount_approval[1]
+        for line in payload['itens']:
+            line['preco_esperado'] = str(self.cart[line['produto']]['produto']['preco_venda'])
         if self.loaded_quote:
             payload['orcamento'] = self.loaded_quote
             payload['total_confirmado'] = str(total)
@@ -898,6 +982,11 @@ class PDVWindow(QMainWindow):
 
     def _submit_checkout(self, payload):
         try:
+            if payload.get('cliente_offline'):
+                local = payload['cliente_offline']
+                customer = self.api.cadastrar_cliente_cpf(local['documento'], local['nome'], local.get('telefone', ''))
+                payload['cliente'] = customer['id']
+                self.store.save_customer(self.tenant_id, customer)
             response = self.api.registrar_venda(payload)
             receipt = self._build_receipt(response["id"])
             receipt_path = self.store.save_receipt(response["id"], receipt)
@@ -912,6 +1001,8 @@ class PDVWindow(QMainWindow):
                 QDesktopServices.openUrl(QUrl.fromLocalFile(str(receipt_path)))
             self.store.clear_checkout_attempt(self.tenant_id, self.api.username)
             self.checkout_payload = None
+            self.sale_key = str(uuid.uuid4())
+            self.discount_approval = None
             self.company.setEnabled(True)
             self.total_discount = None
             self.loaded_quote = None
@@ -920,8 +1011,31 @@ class PDVWindow(QMainWindow):
             self._render_cart()
             self._load_catalog()
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
-            QMessageBox.warning(self, "Venda pendente de confirmação",
-                "A resposta do servidor não chegou. Clique em Finalizar novamente para consultar/concluir a mesma venda, sem duplicar. Não altere o carrinho nem troque de empresa até confirmar.")
+            self.online = False
+            if Decimal(payload.get('credito', '0')) > 0:
+                QMessageBox.warning(self, "Crédito pendente", "A confirmação da venda a prazo exige conexão. Finalize novamente ao reconectar.")
+                return
+            self.store.queue_sale(self.tenant_id, payload, "Aguardando conexão")
+            path = self.store.save_receipt('PENDENTE-' + payload['idempotency_key'], self._build_receipt('PENDENTE — ' + payload['idempotency_key']))
+            # Local quantities are provisional; the server validates again on sync.
+            for line in payload['itens']:
+                for product in self.products:
+                    if int(product['id']) == int(line['produto']):
+                        product['estoque_atual'] = str(max(Decimal('0'), Decimal(str(product['estoque_atual'])) - Decimal(line['quantidade']) * Decimal(str(product.get('fator_conversao', '1')))))
+            self.store.save_products(self.tenant_id, self.products)
+            self.store.clear_checkout_attempt(self.tenant_id, self.api.username)
+            self.checkout_payload = None
+            self.company.setEnabled(True)
+            self.sale_key = str(uuid.uuid4())
+            self.discount_approval = None
+            self.total_discount = None
+            self.loaded_quote = None
+            self.selected_customer = None
+            self.cart.clear()
+            self._render_cart()
+            self._render_catalog()
+            self.status.setText('Offline · venda salva localmente · aguardando sincronização')
+            QMessageBox.information(self, "Venda registrada localmente", f"Comprovante provisório: {path}\nA sincronização é automática quando a conexão voltar. Divergências ficarão pendentes de revisão.")
         except requests.HTTPError as exc:
             if exc.response is not None and 400 <= exc.response.status_code < 500:
                 self.store.clear_checkout_attempt(self.tenant_id, self.api.username)
@@ -1043,6 +1157,7 @@ class PDVWindow(QMainWindow):
             for p in self.last_payments
         )
         change = sum((Decimal(str(p.get("troco", "0"))) for p in self.last_payments), Decimal("0"))
+        pending_notice = "<h2>VENDA LOCAL PENDENTE DE SINCRONIZAÇÃO</h2>" if str(sale_id).startswith('PENDENTE') else ""
         return f"""<!doctype html>
 <html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>Cupom interno #{sale_id}</title>
@@ -1065,7 +1180,7 @@ button {{ width:100%; padding:10px; margin:12px 0; }}
 @media print {{ button {{ display:none; }} body {{ width:auto; }} }}
 </style></head><body>
 <header class="brand">{system_img}{company_img}<h1>{company_name}</h1>{tax_id}
-<div>CUPOM DE COMPRA — NÃO FISCAL</div>
+{pending_notice}<div>CUPOM DE COMPRA — NÃO FISCAL</div>
 <div>Venda #{sale_id}</div><div>{datetime.now().strftime('%d/%m/%Y %H:%M:%S')}</div></header>
 <hr class="rule"><table><tbody>{"".join(rows)}</tbody></table><hr class="rule">
 <p class="total">TOTAL: R$ {total:.2f}</p>
@@ -1193,6 +1308,9 @@ button {{ width:100%; padding:10px; margin:12px 0; }}
             QMessageBox.critical(self, "Falha na movimentação", str(exc))
 
     def _close_cash(self):
+        if self.store.pending_errors(self.tenant_id, self.api.username):
+            QMessageBox.warning(self, "Sincronização pendente", "Sincronize ou revise as vendas pendentes antes de fechar o caixa.")
+            return
         if self.checkout_payload:
             QMessageBox.warning(self, "Venda pendente", "Confirme a venda pendente antes de fechar o caixa.")
             return
@@ -1231,18 +1349,82 @@ button {{ width:100%; padding:10px; margin:12px 0; }}
         except Exception as exc:
             QMessageBox.critical(self, "Falha ao fechar caixa", str(exc))
 
-    def _sync_pending(self):
-        if not self.tenant_id or not self.cash_id:
-            return
-        for key, raw in self.store.pending_sales(self.tenant_id):
-            payload = json.loads(raw)
-            payload["caixa"] = self.cash_id
+    def _show_pending(self):
+        rows = self.store.pending_errors(self.tenant_id, self.api.username)
+        QMessageBox.information(self, 'Sincronização', '\n'.join(f'{key[:8]} · {error or "aguardando envio"}' for key, error in rows) or 'Nenhuma venda pendente deste operador.')
+        self._sync_pending()
+
+    def _update_company_logo(self):
+        pixmap = QPixmap()
+        logo = self.company_info.get('logo_data_url', '')
+        if logo and ',' in logo:
             try:
-                self.api.registrar_venda(payload)
+                pixmap.loadFromData(base64.b64decode(logo.split(',', 1)[1]))
+            except (ValueError, TypeError):
+                pass
+        if pixmap.isNull():
+            pixmap = QPixmap(asset_path('appdv-logo-web.png'))
+        self.company_logo_label.setPixmap(pixmap.scaled(210, 130, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+
+    def _cart_lines(self):
+        return [{'produto': pk, 'quantidade': str(item['quantidade']), 'desconto': str(item.get('desconto', '0'))} for pk, item in self.cart.items()]
+
+    def _ensure_discount_approval(self, key, lines):
+        gross = sum(((Decimal(str(item['produto']['preco_venda'])) * item['quantidade']).quantize(Decimal('.01')) for item in self.cart.values()), Decimal('0'))
+        discount = sum((Decimal(str(line.get('desconto', '0'))) for line in lines), Decimal('0'))
+        if discount * 100 <= gross * 5:
+            return True
+        signature = json.dumps([key, lines], sort_keys=True)
+        if self.discount_approval and self.discount_approval[0] == signature:
+            return True
+        user, ok = QInputDialog.getText(self, "Autorizar desconto acima de 5%", "Usuário do gerente ou administrador:")
+        if not ok:
+            return False
+        password, ok = QInputDialog.getText(self, "Autorizar desconto", "Senha:", QLineEdit.EchoMode.Password)
+        if not ok:
+            return False
+        try:
+            code = self.api.autorizar_desconto(key, lines, user.strip(), password)
+            self.discount_approval = (signature, code)
+            return True
+        except Exception as exc:
+            QMessageBox.warning(self, "Desconto não autorizado", "É necessário validar a autorização online. " + str(exc))
+            return False
+        finally:
+            password = ''
+
+    def _sync_pending(self):
+        if not self.tenant_id or not self.cash_id or (self.sync_worker and self.sync_worker.isRunning()):
+            return
+        rows = [(key, raw) for key, raw in self.store.pending_sales(self.tenant_id) if json.loads(raw).get('operador_local') == self.api.username]
+        if not rows:
+            return
+        tenant = self.tenant_id
+        self.sync_worker = PendingSyncWorker(self.api, rows, self)
+        def result(key, error, response):
+            if error:
+                self.store.set_error(key, error)
+                if self.tenant_id == tenant:
+                    self.status.setText('Sincronização pendente: ' + error[:180])
+            else:
+                path = Path(self.store.path).parent / 'comprovantes' / f'cupom-PENDENTE-{key}.html'
+                if path.exists():
+                    text = path.read_text(encoding='utf-8').replace('PENDENTE — ' + key, str(response['id'])).replace('VENDA LOCAL PENDENTE DE SINCRONIZAÇÃO', f"VENDA SINCRONIZADA #{response['id']}")
+                    self.store.save_receipt(response['id'], text)
+                    path.write_text(text, encoding='utf-8')
                 self.store.mark_synced(key)
-            except Exception as exc:
-                self.store.set_error(key, exc)
-                break
+                if self.tenant_id == tenant:
+                    self.online = True
+                    self.status.setText(f"Venda sincronizada #{response['id']}")
+        self.sync_worker.result.connect(result)
+        self.sync_worker.start()
+
+    def closeEvent(self, event):
+        if self.sync_worker and self.sync_worker.isRunning():
+            QMessageBox.information(self, 'Sincronização', 'Aguarde a tentativa de sincronização terminar antes de sair.')
+            event.ignore()
+            return
+        super().closeEvent(event)
 
 
 def main():

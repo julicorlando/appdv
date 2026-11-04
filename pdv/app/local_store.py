@@ -14,6 +14,13 @@ class LocalStore:
     def __init__(self, path=None):
         self.path = str(path or database_path())
         with self.connect() as db:
+            db.execute("""CREATE TABLE IF NOT EXISTS company_cache (
+                tenant_id TEXT PRIMARY KEY, payload TEXT NOT NULL
+            )""")
+            db.execute("""CREATE TABLE IF NOT EXISTS customer_cache (
+                tenant_id TEXT NOT NULL, cpf TEXT NOT NULL, payload TEXT NOT NULL,
+                PRIMARY KEY (tenant_id, cpf)
+            )""")
             db.execute("""CREATE TABLE IF NOT EXISTS checkout_attempts (
                 tenant_id TEXT NOT NULL, operator TEXT NOT NULL, payload TEXT NOT NULL,
                 PRIMARY KEY (tenant_id, operator)
@@ -119,3 +126,26 @@ class LocalStore:
     def clear_checkout_attempt(self, tenant_id, operator):
         with self.connect() as db:
             db.execute("DELETE FROM checkout_attempts WHERE tenant_id=? AND operator=?", (str(tenant_id), str(operator)))
+
+    def save_company(self, tenant_id, payload):
+        with self.connect() as db:
+            db.execute("INSERT OR REPLACE INTO company_cache VALUES (?, ?)", (str(tenant_id), json.dumps(payload)))
+
+    def company(self, tenant_id):
+        with self.connect() as db:
+            row = db.execute("SELECT payload FROM company_cache WHERE tenant_id=?", (str(tenant_id),)).fetchone()
+        return json.loads(row[0]) if row else {}
+
+    def save_customer(self, tenant_id, payload):
+        with self.connect() as db:
+            db.execute("INSERT OR REPLACE INTO customer_cache VALUES (?, ?, ?)", (str(tenant_id), payload['documento'], json.dumps(payload)))
+
+    def customer(self, tenant_id, cpf):
+        with self.connect() as db:
+            row = db.execute("SELECT payload FROM customer_cache WHERE tenant_id=? AND cpf=?", (str(tenant_id), cpf)).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def pending_errors(self, tenant_id, operator):
+        with self.connect() as db:
+            rows = db.execute("SELECT idempotency_key, payload, last_error FROM pending_sales WHERE tenant_id=? ORDER BY created_at", (str(tenant_id),)).fetchall()
+        return [(key, error) for key, payload, error in rows if json.loads(payload).get('operador_local') == operator]

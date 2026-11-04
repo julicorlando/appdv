@@ -514,3 +514,14 @@ class Orcamento(models.Model):
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=('empresa', 'chave'), name='uniq_orcamento_empresa_chave')]
+
+
+class AprovacaoDesconto(models.Model):
+    codigo = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    empresa = models.ForeignKey(Empresa, on_delete=models.CASCADE)
+    operador = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='descontos_solicitados')
+    aprovador = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='descontos_aprovados')
+    chave_operacao = models.UUIDField()
+    resumo_itens = models.CharField(max_length=64)
+    criada_em = models.DateTimeField(auto_now_add=True)
+    venda = models.OneToOneField(Venda, null=True, blank=True, on_delete=models.PROTECT)

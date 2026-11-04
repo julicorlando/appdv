@@ -101,3 +101,12 @@ O Compose de produção exige as variáveis `SECRET_KEY`, `ALLOWED_HOSTS`, `CSRF
 - Identificação e orçamento exigem conexão. Tentativas de venda ficam salvas localmente por empresa/operador; após perda da resposta, usar Finalizar novamente consulta/conclui a mesma operação sem gerar uma nova chave.
 - Aplique as migrations do backend antes de usar o executável atualizado. No Windows, atualize a main e execute `pdv/build_windows.bat` para gerar o novo executável. O redeploy Web não atualiza executáveis já instalados.
 - Validação desktop: `PYTHONPATH=pdv QT_QPA_PLATFORM=offscreen python -m unittest discover -s pdv/tests`. Validação backend: `python backend/manage.py test core`.
+
+
+### Desconto autorizado e operação durante queda de internet
+
+O caixa pode aplicar desconto de até 5% sobre o subtotal. Acima disso, o PDV solicita usuário e senha de gerente/administrador da mesma empresa. A senha é validada online e não é persistida no PC. A autorização vale apenas para os itens e a chave daquela operação, por até 24 horas; na venda, é consumida e fica vinculada ao aprovador. Alterações dos itens exigem nova autorização. Não é possível obter nova autorização privilegiada sem conexão.
+
+Com login e caixa previamente abertos, o PC continua vendendo pelo catálogo local durante uma queda. Clientes conhecidos são consultados no cache e novos CPFs podem ser registrados provisoriamente. O comprovante informa que a venda está pendente. A fila é persistida em SQLite e reenviada em segundo plano a cada 15 segundos com a mesma chave, caixa e operador, sem duplicação. Produtos/preços/estoque/permissões são revalidados no servidor; diferenças ficam pendentes, sem serem descartadas. O botão **Sincronização** mostra os motivos. O caixa não pode ser fechado com pendências do operador. Vendas a prazo exigem conexão para validar crédito. O início de uma sessão e abertura de caixa exigem conexão.
+
+A logo exibida na consulta do PDV vem do mesmo cadastro da empresa utilizado nos cupons e fica em cache para quedas de conexão; se não houver logo cadastrada, a marca ApPdv é utilizada.

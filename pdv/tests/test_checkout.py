@@ -111,3 +111,77 @@ class CustomerLookupResponseTests(unittest.TestCase):
         self.assertEqual(customer['id'], 42)
         api.cadastrar_cliente_cpf.assert_called_once_with('52998224725', 'Cliente QA', '')
         window.close()
+
+
+class OfflineCheckoutTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_outage_queues_sale_and_keeps_cash_and_key_on_reconnect(self):
+        import json
+        import tempfile
+        import requests
+        from pathlib import Path
+        from unittest.mock import Mock
+        from app.local_store import LocalStore
+        from app.main import PendingSyncWorker
+        api = Mock(username='cashier')
+        api.registrar_venda.side_effect = requests.ConnectionError('offline')
+        with tempfile.TemporaryDirectory() as folder:
+            with patch.object(PDVWindow, '_select_company'), patch('app.main.LocalStore'):
+                window = PDVWindow(api)
+            window.store = LocalStore(Path(folder) / 'store.db')
+            window.tenant_id = '1'
+            window.cash_id = 77
+            product = {'id':1, 'nome':'A','codigo':'A','unidade':'UN','preco_venda':'10', 'estoque_atual':'10'}
+            window.products = [product]
+            window.cart = {1:{'produto':product,'quantidade':Decimal('1'),'desconto':Decimal('0')}}
+            window.last_payments = [{'meio':'DINHEIRO','valor':'10'}]
+            payload = {'idempotency_key':'same-operation','caixa':77,'operador_local':'cashier','credito':'0','itens':[{'produto':1,'quantidade':'1'}], 'pagamentos':window.last_payments}
+            window.checkout_payload = payload
+            with patch('app.main.QMessageBox.information'):
+                window._submit_checkout(payload)
+            rows = window.store.pending_sales('1')
+            self.assertEqual(len(rows), 1)
+            self.assertFalse(window.cart)
+            self.assertEqual(window.store.list_products('1')[0]['estoque_atual'], '9')
+            text = next((Path(folder) / 'comprovantes').glob('*.html')).read_text()
+            self.assertIn('PENDENTE DE SINCRONIZAÇÃO', text)
+            clone = Mock()
+            clone.registrar_venda.return_value = {'id': 123}
+            api.base_url = 'https://example.com'
+            api.empresa_id = '1'
+            api.session.headers = {}
+            api.refresh_token = None
+            with patch('app.main.ArmazemAPI', return_value=clone):
+                worker = PendingSyncWorker(api, rows)
+            received = []
+            worker.result.connect(lambda key, error, response: received.append((key, error, response)))
+            worker.run()
+            sent = clone.registrar_venda.call_args.args[0]
+            self.assertEqual(sent['caixa'], 77)
+            self.assertEqual(sent['idempotency_key'], 'same-operation')
+            self.assertEqual(received[0][2]['id'], 123)
+            window.close()
+
+    def test_offline_new_cpf_is_stored_locally_without_password(self):
+        import tempfile
+        import requests
+        from pathlib import Path
+        from unittest.mock import Mock
+        from app.local_store import LocalStore
+        api = Mock(username='cashier')
+        api.cliente_cpf.side_effect = requests.ConnectionError('offline')
+        with tempfile.TemporaryDirectory() as folder:
+            with patch.object(PDVWindow, '_select_company'), patch('app.main.LocalStore'):
+                window = PDVWindow(api)
+            window.store = LocalStore(Path(folder) / 'store.db')
+            window.tenant_id = '1'
+            with patch('app.main.QInputDialog.getText', side_effect=[('52998224725',True),('Cliente local',True),('',True)]):
+                customer = window._identify_customer()
+            self.assertTrue(customer['offline'])
+            self.assertIsNone(customer['id'])
+            self.assertEqual(window.store.customer('1','52998224725')['nome'], 'Cliente local')
+            self.assertIsNone(window.store.customer('2','52998224725'))
+            window.close()

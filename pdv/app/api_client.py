@@ -155,3 +155,7 @@ class ArmazemAPI:
 
     def buscar_orcamentos(self, busca, tipo):
         return self._request('GET', '/api/v1/orcamentos/', params={'busca': busca, 'tipo': tipo}).json()
+
+    def autorizar_desconto(self, chave, itens, usuario, senha):
+        return self._request('POST', '/api/v1/descontos/autorizar/', json={
+            'chave': chave, 'itens': itens, 'usuario': usuario, 'senha': senha}).json()['codigo']
