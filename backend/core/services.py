@@ -34,6 +34,13 @@ def registrar_venda(*, empresa, usuario, dados, frete=Decimal("0.00")):
     except (Caixa.DoesNotExist, ValueError, TypeError):
         raise ValidationError({"caixa": "Caixa aberto do operador não encontrado nesta empresa."})
 
+    # Another retry may have committed while this request waited for the cash lock.
+    existente = Venda.objects.filter(empresa=empresa, idempotency_key=chave).first()
+    if existente:
+        if existente.operador_id != usuario.pk:
+            raise ValidationError({"idempotency_key": "Esta chave já foi usada por outro operador."})
+        return existente, False
+
     linhas = dados.get("itens")
     pagamentos = dados.get("pagamentos")
     try:
@@ -44,7 +51,7 @@ def registrar_venda(*, empresa, usuario, dados, frete=Decimal("0.00")):
         raise ValidationError({"credito": "Informe um valor de crédito válido."})
     if not isinstance(linhas, list) or not linhas:
         raise ValidationError({"itens": "A venda precisa conter ao menos um produto."})
-    if not isinstance(pagamentos, list) or (not pagamentos and credito == 0):
+    if not isinstance(pagamentos, list):
         raise ValidationError({"pagamentos": "Informe pagamento ou valor lançado a crédito."})
 
     cliente = None

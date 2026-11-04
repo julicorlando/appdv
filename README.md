@@ -90,3 +90,14 @@ A empresa pode enviar uma logo em **Empresa e cupom** no painel web. O cupom do 
 
 ## Implantação Docker Compose no Coolify
 O Compose de produção exige as variáveis `SECRET_KEY`, `ALLOWED_HOSTS`, `CSRF_TRUSTED_ORIGINS`, `POSTGRES_DB`, `POSTGRES_USER` e `POSTGRES_PASSWORD`. Configure-as no ambiente do Coolify; não versione segredos. Use uma senha de banco aleatória alfanumérica, para que a URL `DATABASE_URL` continue válida. O serviço web expõe internamente a porta 8000 para o proxy Coolify; o PostgreSQL não publica porta no host. Os volumes `postgres_data` e `app_media` preservam banco e imagens.
+
+
+### PDV Windows — clientes, orçamentos e pagamentos
+
+- Finalizar venda solicita CPF válido, busca o cadastro da empresa e permite cadastro rápido de nome/telefone sem conceder limite de crédito. Cancelar a identificação interrompe a finalização.
+- Fazer/imprimir orçamento salva número, cliente, itens, preços, descontos e validade no servidor. Buscar orçamento permite pesquisar por número ou CPF, reimprimir ou carregar para venda. Não reserva estoque; preços e disponibilidade são conferidos novamente na conversão. Um orçamento não pode gerar duas vendas.
+- A tela de pagamento distribui valores entre dinheiro, Pix, cartão de débito/crédito, outra forma e conta do cliente. Exibe saldo e troco; somente dinheiro gera troco. Conta do cliente continua sujeita ao limite do servidor. Cartão/Pix são registros manuais, sem captura bancária/TEF automática.
+- Desconto sobre o total em reais ou percentual exige gerente/administrador e é rateado nos itens, com conferência dos centavos. Alterar itens/condições de orçamento carregado exige salvar um novo orçamento antes de convertê-lo.
+- Identificação e orçamento exigem conexão. Tentativas de venda ficam salvas localmente por empresa/operador; após perda da resposta, usar Finalizar novamente consulta/conclui a mesma operação sem gerar uma nova chave.
+- Aplique as migrations do backend antes de usar o executável atualizado. No Windows, atualize a main e execute `pdv/build_windows.bat` para gerar o novo executável. O redeploy Web não atualiza executáveis já instalados.
+- Validação desktop: `PYTHONPATH=pdv QT_QPA_PLATFORM=offscreen python -m unittest discover -s pdv/tests`. Validação backend: `python backend/manage.py test core`.

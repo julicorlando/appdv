@@ -28,7 +28,13 @@ class ArmazemAPI:
                 self.session.headers["Authorization"] = f"Bearer {tokens['access']}"
                 self.refresh_token = tokens.get("refresh", self.refresh_token)
                 response = self.session.request(method, url, timeout=self.timeout, **kwargs)
-        response.raise_for_status()
+        if not response.ok:
+            try:
+                details = response.json()
+                message = "; ".join(f"{key}: {value}" for key, value in details.items()) if isinstance(details, dict) else str(details)
+            except ValueError:
+                message = "O servidor não conseguiu concluir a operação."
+            raise requests.HTTPError(message, response=response)
         return response
 
     def login(self, username, password):
@@ -125,3 +131,15 @@ class ArmazemAPI:
             json={"caixa": caixa_id, "pagamentos": pagamentos},
         )
         return response.json()
+
+    def cliente_cpf(self, cpf):
+        return self._request('GET', '/api/v1/clientes/cpf/', params={'cpf': cpf}).json()
+
+    def cadastrar_cliente_cpf(self, cpf, nome, telefone):
+        return self._request('POST', '/api/v1/clientes/cpf/', json={'cpf': cpf, 'nome': nome, 'telefone': telefone}).json()
+
+    def salvar_orcamento(self, payload):
+        return self._request('POST', '/api/v1/orcamentos/', json=payload).json()
+
+    def buscar_orcamentos(self, busca, tipo):
+        return self._request('GET', '/api/v1/orcamentos/', params={'busca': busca, 'tipo': tipo}).json()

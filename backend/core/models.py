@@ -498,3 +498,19 @@ class RecebimentoConta(models.Model):
 
     class Meta:
         ordering = ("-recebido_em",)
+
+
+class Orcamento(models.Model):
+    empresa = models.ForeignKey(Empresa, on_delete=models.CASCADE, related_name='orcamentos')
+    cliente = models.ForeignKey(Cliente, on_delete=models.PROTECT, related_name='orcamentos')
+    operador = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    chave = models.UUIDField(default=uuid.uuid4)
+    itens = models.JSONField(default=list)
+    total = models.DecimalField(max_digits=12, decimal_places=2)
+    validade = models.DateField()
+    criado_em = models.DateTimeField(auto_now_add=True)
+    venda = models.OneToOneField(Venda, null=True, blank=True, on_delete=models.PROTECT, related_name='orcamento_origem')
+    cancelado = models.BooleanField(default=False)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=('empresa', 'chave'), name='uniq_orcamento_empresa_chave')]

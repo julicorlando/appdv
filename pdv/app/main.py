@@ -21,6 +21,9 @@ from PySide6.QtWidgets import (
 
 from app.api_client import ArmazemAPI
 from app.local_store import LocalStore
+from app.payments import PaymentDialog
+from app.quotes import quote_html
+from app.discounts import distribute_discount
 
 
 def asset_path(name):
@@ -178,6 +181,11 @@ class PDVWindow(QMainWindow):
         self.cash_id = None
         self.tenant_id = None
         self.company_info = {}
+        self.selected_customer = None
+        self.loaded_quote = None
+        self.total_discount = None
+        self.quote_save_key = None
+        self.checkout_payload = None
         self.current_product = None
         self.company_roles = {}
         self.tenant_role = "CAIXA"
@@ -318,7 +326,7 @@ class PDVWindow(QMainWindow):
         self.edit_cart_item.clicked.connect(self._edit_cart_item)
         self.remove_cart_item = QPushButton("Remover")
         self.remove_cart_item.clicked.connect(self._remove_cart_item)
-        self.discount_cart_item = QPushButton("Desconto")
+        self.discount_cart_item = QPushButton("Desconto total (R$ / %)")
         self.discount_cart_item.clicked.connect(self._discount_cart_item)
         self.discount_cart_item.setEnabled(False)
         self.hold_cart = QPushButton("Suspender")
@@ -346,6 +354,8 @@ class PDVWindow(QMainWindow):
         self.pay.clicked.connect(self._checkout)
         self.quote = QPushButton("F3 · Fazer / imprimir orçamento")
         self.quote.clicked.connect(self._print_quote)
+        self.find_quote = QPushButton("Buscar orçamento")
+        self.find_quote.clicked.connect(self._find_quote)
         self.web_order = QPushButton("Pedido via WhatsApp")
         self.web_order.clicked.connect(self._create_web_order)
         self.web_orders = QPushButton("Pedidos confirmados")
@@ -359,7 +369,7 @@ class PDVWindow(QMainWindow):
         self.admin_button = QPushButton("Área administrativa")
         self.admin_button.clicked.connect(self._open_admin_panel)
         self.admin_button.setVisible(False)
-        for button in (self.pay, self.quote, self.web_order, self.web_orders, self.cash_move, self.close_cash, self.cancel_sale, self.admin_button):
+        for button in (self.pay, self.quote, self.find_quote, self.web_order, self.web_orders, self.cash_move, self.close_cash, self.cancel_sale, self.admin_button):
             actions.addWidget(button)
         layout.addLayout(actions)
 
@@ -388,6 +398,10 @@ class PDVWindow(QMainWindow):
     def _company_changed(self, index):
         if index < 0:
             return
+        self.total_discount = None
+        self.selected_customer = None
+        self.loaded_quote = None
+        self.checkout_payload = None
         self.tenant_id = str(self.company.currentData())
         self.tenant_role = self.company_roles.get(self.tenant_id, "CAIXA")
         self.discount_cart_item.setEnabled(self.tenant_role in ("ADMIN", "GERENTE"))
@@ -413,6 +427,16 @@ class PDVWindow(QMainWindow):
             self.status.setText("Caixa indisponível")
             QMessageBox.warning(self, "Abertura de caixa", str(exc))
         self._load_catalog()
+        attempt = self.store.checkout_attempt(self.tenant_id, self.api.username)
+        if attempt:
+            self.checkout_payload = attempt['payload']
+            self.selected_customer = attempt.get('cliente')
+            self.loaded_quote = self.checkout_payload.get('orcamento')
+            self.last_payments = self.checkout_payload['pagamentos']
+            self.cart = {int(pk): {'produto': item['produto'], 'quantidade': Decimal(item['quantidade']), 'desconto': Decimal(item['desconto'])} for pk, item in attempt['cart'].items()}
+            self.company.setEnabled(False)
+            self._render_cart()
+            QMessageBox.information(self, "Venda pendente recuperada", "Há uma tentativa de venda pendente deste operador. Clique em Finalizar para confirmar a mesma operação sem duplicar.")
 
     def _load_catalog(self):
         if not self.tenant_id:
@@ -481,6 +505,9 @@ class PDVWindow(QMainWindow):
             self._add_product(self.products[row])
 
     def _add_product(self, product):
+        if self.checkout_payload:
+            QMessageBox.warning(self, "Venda pendente", "Finalize a tentativa pendente antes de alterar o carrinho.")
+            return
         product_id = int(product["id"])
         available = Decimal(str(product.get("estoque_atual", "0")))
         quantity = self.cart.get(product_id, {}).get("quantidade", Decimal("0")) + Decimal("1")
@@ -497,6 +524,9 @@ class PDVWindow(QMainWindow):
         self._render_cart()
 
     def _suspend_sale(self):
+        if self.checkout_payload:
+            QMessageBox.warning(self, "Venda pendente", "Finalize a tentativa pendente antes de alterar o carrinho.")
+            return
         if not self.cart or not self.tenant_id:
             QMessageBox.information(self, "Suspender venda", "O carrinho está vazio.")
             return
@@ -507,6 +537,8 @@ class PDVWindow(QMainWindow):
         if not accepted:
             return
         payload = {
+            "cliente": self.selected_customer,
+            "orcamento": self.loaded_quote,
             "items": [
                 {
                     "produto": product_id, "quantidade": str(item["quantidade"]),
@@ -516,11 +548,17 @@ class PDVWindow(QMainWindow):
             ]
         }
         self.store.hold_sale(self.tenant_id, label.strip() or "Venda suspensa", payload)
+        self.total_discount = None
+        self.loaded_quote = None
+        self.selected_customer = None
         self.cart.clear()
         self._render_cart()
         QMessageBox.information(self, "Venda suspensa", "O carrinho foi salvo neste computador.")
 
     def _resume_sale(self):
+        if self.checkout_payload:
+            QMessageBox.warning(self, "Venda pendente", "Finalize a tentativa pendente antes de alterar o carrinho.")
+            return
         if not self.tenant_id:
             return
         held = self.store.held_sales(self.tenant_id)
@@ -561,11 +599,17 @@ class PDVWindow(QMainWindow):
             self._suspend_sale()
             if self.cart:
                 return
+        self.total_discount = None
+        self.loaded_quote = payload.get("orcamento")
+        self.selected_customer = payload.get("cliente")
         self.cart = restored
         self.store.remove_held_sale(sale_id, self.tenant_id)
         self._render_cart()
 
     def _edit_cart_item(self):
+        if self.checkout_payload:
+            QMessageBox.warning(self, "Venda pendente", "Finalize a tentativa pendente antes de alterar o carrinho.")
+            return
         row = self.cart_table.currentRow()
         entries = list(self.cart.items())
         if row < 0 or row >= len(entries):
@@ -592,28 +636,29 @@ class PDVWindow(QMainWindow):
         self._render_cart()
 
     def _discount_cart_item(self):
+        if self.checkout_payload:
+            QMessageBox.warning(self, "Venda pendente", "Finalize a tentativa pendente antes de alterar o carrinho.")
+            return
         if self.tenant_role not in ("ADMIN", "GERENTE"):
             QMessageBox.warning(self, "Desconto", "Descontos exigem perfil de gerente ou administrador.")
             return
-        row = self.cart_table.currentRow()
-        entries = list(self.cart.items())
-        if row < 0 or row >= len(entries):
-            QMessageBox.information(self, "Desconto", "Selecione um item do carrinho.")
+        if not self.cart:
             return
-        product_id, item = entries[row]
-        product = item["produto"]
-        gross = (Decimal(str(product["preco_venda"])) * item["quantidade"]).quantize(Decimal("0.01"))
-        discount, accepted = QInputDialog.getDouble(
-            self, "Desconto no item", "Desconto em reais (R$):",
-            float(item.get("desconto", Decimal("0"))), 0, float(gross), 2,
-        )
-        if not accepted:
+        mode, ok = QInputDialog.getItem(self, "Desconto no total", "Tipo de desconto:", ["R$", "%"], 0, False)
+        if not ok:
             return
-        self.cart[product_id]["desconto"] = Decimal(str(discount)).quantize(Decimal("0.01"))
-        self._show_product(product)
+        gross = sum(((Decimal(str(item['produto']['preco_venda'])) * item['quantidade']).quantize(Decimal('.01')) for item in self.cart.values()), Decimal('0'))
+        value, ok = QInputDialog.getDouble(self, "Desconto no total", "Percentual (%):" if mode == '%' else "Valor do desconto (R$):", 0, 0, 100 if mode == '%' else float(gross), 2)
+        if not ok:
+            return
+        self.total_discount = (mode, Decimal(str(value)))
+        # A conversão exigirá salvar novo orçamento se suas condições forem alteradas.
         self._render_cart()
 
     def _remove_cart_item(self):
+        if self.checkout_payload:
+            QMessageBox.warning(self, "Venda pendente", "Finalize a tentativa pendente antes de alterar o carrinho.")
+            return
         row = self.cart_table.currentRow()
         entries = list(self.cart)
         if row < 0 or row >= len(entries):
@@ -624,6 +669,13 @@ class PDVWindow(QMainWindow):
 
     def _render_cart(self):
         rows = list(self.cart.values())
+        if self.total_discount and rows:
+            gross_values = [(Decimal(str(item['produto']['preco_venda'])) * item['quantidade']).quantize(Decimal('.01')) for item in rows]
+            mode, value = self.total_discount
+            if mode == 'R$':
+                value = min(value, sum(gross_values, Decimal('0')))
+            for item, discount in zip(rows, distribute_discount(gross_values, mode, value)):
+                item['desconto'] = discount
         self.cart_table.setRowCount(len(rows))
         total = Decimal("0")
         for row, item in enumerate(rows):
@@ -638,6 +690,8 @@ class PDVWindow(QMainWindow):
             ]
             for col, value in enumerate(values):
                 self.cart_table.setItem(row, col, QTableWidgetItem(str(value)))
+        gross = sum(((Decimal(str(item['produto']['preco_venda'])) * item['quantidade']).quantize(Decimal('.01')) for item in rows), Decimal('0'))
+        self.subtotal.setText(f"Subtotal: R$ {gross:.2f} · Desconto: R$ {gross - total:.2f}")
         self.total.setText(f"Total: R$ {total:.2f}")
 
     def _update_clock(self):
@@ -673,170 +727,148 @@ class PDVWindow(QMainWindow):
         )
         dialog.exec()
 
-    def _print_quote(self):
-        if not self.cart:
-            QMessageBox.information(self, "Orçamento", "Adicione produtos antes de gerar o orçamento.")
-            return
-        customer, accepted = QInputDialog.getText(
-            self, "Orçamento", "Nome do cliente (opcional):"
-        )
+    def _identify_customer(self):
+        cpf, accepted = QInputDialog.getText(self, "Identificar cliente", "CPF do cliente:",
+            text=(self.selected_customer or {}).get("documento", ""))
         if not accepted:
-            return
-        validity, accepted = QInputDialog.getInt(
-            self, "Validade do orçamento", "Validade em dias:",
-            7, 1, 90, 1,
-        )
-        if not accepted:
-            return
-        quote_id = uuid.uuid4().hex[:10].upper()
-        path = Path(self.store.path).parent / "orcamentos"
-        path.mkdir(parents=True, exist_ok=True)
-        file_path = path / f"orcamento-{quote_id}.html"
-        rows = []
-        subtotal = Decimal("0.00")
-        discounts = Decimal("0.00")
-        for item in self.cart.values():
-            product = item["produto"]
-            quantity = item["quantidade"]
-            price = Decimal(str(product["preco_venda"]))
-            discount = Decimal(str(item.get("desconto", "0")))
-            line_total = (quantity * price - discount).quantize(Decimal("0.01"))
-            subtotal += (quantity * price).quantize(Decimal("0.01"))
-            discounts += discount
-            rows.append(
-                f"<tr><td>{html.escape(str(product.get('codigo','')))} · "
-                f"{html.escape(str(product.get('nome','')))}</td>"
-                f"<td>{quantity} {html.escape(str(product.get('unidade','')))}</td>"
-                f"<td>R$ {price:.2f}</td><td>R$ {discount:.2f}</td>"
-                f"<td>R$ {line_total:.2f}</td></tr>"
-            )
-        total = subtotal - discounts
-        company = html.escape(self.company.currentText())
-        customer_html = f"<p><b>Cliente:</b> {html.escape(customer.strip())}</p>" if customer.strip() else ""
-        logo_path = Path(asset_path("appdv-logo-web.png"))
-        # Embed images so saved budgets remain printable after PyInstaller cleanup.
-        system_logo = ("data:image/png;base64," + base64.b64encode(
-            logo_path.read_bytes()).decode("ascii")) if logo_path.exists() else ""
-        company_logo = html.escape(str(self.company_info.get("logo_data_url") or ""), quote=True)
-        system_img = f"<img src='{system_logo}' alt='ApPdv' style='max-width:180px;max-height:60px'>" if system_logo else "<b>ApPdv</b>"
-        company_img = f"<img src='{company_logo}' alt='Logo {company}' style='max-width:200px;max-height:90px'>" if company_logo else ""
-        logo_html = f"<div style='display:flex;align-items:center;gap:20px;flex-wrap:wrap'>{system_img}{company_img}</div>"
-        details = self.company_info
-        company_lines = [details.get("razao_social"),
-            "CNPJ: " + details["cnpj"] if details.get("cnpj") else "",
-            "IE: " + details["inscricao_estadual"] if details.get("inscricao_estadual") else "",
-            details.get("endereco_documento"),
-            " · ".join(filter(None, [details.get("telefone"), details.get("email")]))]
-        company_details = "".join(f"<div>{html.escape(str(line))}</div>" for line in company_lines if line)
-        quote = f"""<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Orçamento {quote_id}</title>
-<style>body{{font:14px Arial,sans-serif;margin:28px;color:#17202a}}header{{display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #203879;padding-bottom:14px}}h1{{color:palette(window-text)}}table{{width:100%;border-collapse:collapse;margin-top:22px}}th,td{{padding:10px;border-bottom:1px solid #d9dee8;text-align:left}}th{{background:#edf1f7}}.summary{{text-align:right;font-size:17px;line-height:1.8;margin-top:18px}}.note{{background:#f4f6f9;padding:12px;border-radius:8px;margin-top:20px}}button{{padding:12px 20px;background:#203879;color:white;border:0;border-radius:6px;font-weight:bold}}@media print{{button{{display:none}}body{{margin:0}}}}</style></head>
-<body><header><div>{logo_html}<p>{company}</p>{company_details}</div><div><h1>ORÇAMENTO</h1><b>Nº {quote_id}</b><br>{datetime.now().strftime('%d/%m/%Y %H:%M')}</div></header>
-{customer_html}<p>Válido por {validity} dias · Vencimento: {(datetime.now() + __import__('datetime').timedelta(days=validity)).strftime('%d/%m/%Y')}</p>
-<table><thead><tr><th>Produto</th><th>Quantidade</th><th>Preço unitário</th><th>Desconto</th><th>Total</th></tr></thead><tbody>{"".join(rows)}</tbody></table>
-<div class="summary">Subtotal: R$ {subtotal:.2f}<br>Descontos: R$ {discounts:.2f}<br><strong>TOTAL: R$ {total:.2f}</strong></div>
-<div class="note">Este documento é um orçamento e não representa venda, reserva ou baixa de estoque. Preços e disponibilidade deverão ser confirmados no momento da compra.</div>
-<p style="text-align:center"><button onclick="window.print()">Imprimir orçamento</button></p></body></html>"""
-        file_path.write_text(quote, encoding="utf-8")
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(file_path)))
-        QMessageBox.information(self, "Orçamento gerado", f"Orçamento {quote_id} salvo em:\n{file_path}")
-
-    def _collect_payments(self, total):
-        """Collect one or more payment methods and calculate cash change."""
-        methods = ["DINHEIRO", "PIX", "CARTAO", "OUTRO"]
-        labels = ["Dinheiro", "PIX", "Cartão", "Outro"]
-        remaining = total.quantize(Decimal("0.01"))
-        payments = []
-        while remaining > 0:
-            if len(payments) >= 10:
-                QMessageBox.warning(self, "Pagamento", "Limite de 10 formas de pagamento por venda.")
-                return None
-            method, accepted = QInputDialog.getItem(
-                self, "Forma de pagamento",
-                f"Falta pagar R$ {remaining:.2f}. Selecione a próxima forma:",
-                labels, 0, False,
-            )
-            if not accepted:
-                return None
-            payment_method = methods[labels.index(method)]
-            if payment_method == "DINHEIRO":
-                received_value, accepted = QInputDialog.getDouble(
-                    self, "Dinheiro recebido",
-                    f"Valor recebido em dinheiro (R$). Falta pagar R$ {remaining:.2f}:",
-                    float(remaining), 0.01, 10000000.00, 2,
-                )
-                if not accepted:
+            return None
+        try:
+            customer = self.api.cliente_cpf(cpf.strip())
+            if customer:
+                answer = QMessageBox.question(self, "Cliente encontrado", f"Utilizar o cadastro de {customer['nome']}?")
+                if answer != QMessageBox.StandardButton.Yes:
                     return None
-                received = Decimal(str(received_value)).quantize(Decimal("0.01"))
-                applied = min(received, remaining)
-                change = max(received - remaining, Decimal("0")).quantize(Decimal("0.01"))
             else:
-                applied_value, accepted = QInputDialog.getDouble(
-                    self, "Valor do pagamento",
-                    f"Valor pago em {method} (R$). Falta pagar R$ {remaining:.2f}:",
-                    float(remaining), 0.01, float(remaining), 2,
-                )
+                name, accepted = QInputDialog.getText(self, "Novo cliente", "CPF não cadastrado. Nome completo:")
+                if not accepted or not name.strip():
+                    return None
+                phone, accepted = QInputDialog.getText(self, "Novo cliente", "Telefone (opcional):")
                 if not accepted:
                     return None
-                applied = Decimal(str(applied_value)).quantize(Decimal("0.01"))
-                received = applied
-                change = Decimal("0.00")
-            if applied <= 0:
-                QMessageBox.warning(self, "Pagamento", "O valor pago precisa ser maior que zero.")
-                continue
-            payments.append({
-                "meio": payment_method,
-                "valor": str(applied),
-                "valor_recebido": str(received),
-                "troco": str(change),
-            })
-            remaining = (remaining - applied).quantize(Decimal("0.01"))
-            if remaining > 0:
-                result = QMessageBox.question(
-                    self, "Pagamento parcial",
-                    f"Restam R$ {remaining:.2f}. Adicionar outra forma de pagamento?",
-                )
-                if result != QMessageBox.StandardButton.Yes:
-                    return None
-        return payments
+                customer = self.api.cadastrar_cliente_cpf(cpf.strip(), name.strip(), phone.strip())
+            self.selected_customer = customer
+            return customer
+        except Exception as exc:
+            QMessageBox.warning(self, "Cliente", f"Não foi possível identificar o cliente. Confira o CPF e a conexão.\n{exc}")
+            return None
+
+    def _show_saved_quote(self, quote):
+        folder = Path(self.store.path).parent / "orcamentos"
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / f"orcamento-{quote['id']}.html"
+        path.write_text(quote_html(quote, self.company_info, asset_path("appdv-logo-web.png")), encoding="utf-8")
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
+    def _print_quote(self):
+        if self.checkout_payload:
+            QMessageBox.warning(self, "Venda pendente", "Finalize a tentativa pendente antes de alterar o carrinho.")
+            return
+        if not self.cart:
+            QMessageBox.information(self, "Orçamento", "Adicione produtos antes de salvar o orçamento.")
+            return
+        customer = self._identify_customer()
+        if not customer:
+            return
+        validity, accepted = QInputDialog.getInt(self, "Validade", "Validade em dias:", 7, 1, 90)
+        if not accepted:
+            return
+        from datetime import timedelta
+        payload = {"cliente": customer['id'], "validade": (datetime.now().date() + timedelta(days=validity)).isoformat(),
+            "itens": [{"produto": pk, "quantidade": str(item['quantidade']), "desconto": str(item.get('desconto', '0'))} for pk, item in self.cart.items()]}
+        signature = json.dumps(payload, sort_keys=True)
+        if not self.quote_save_key or self.quote_save_key[0] != signature:
+            self.quote_save_key = (signature, str(uuid.uuid4()))
+        payload['chave'] = self.quote_save_key[1]
+        try:
+            quote = self.api.salvar_orcamento(payload)
+            self.loaded_quote = quote["id"]
+            self._show_saved_quote(quote)
+            QMessageBox.information(self, "Orçamento salvo", f"Orçamento nº {quote['id']} salvo no sistema. Pesquise pelo número ou CPF.")
+        except Exception as exc:
+            QMessageBox.warning(self, "Orçamento", f"Não foi possível salvar/imprimir. Tente novamente; a tentativa utiliza a mesma chave para evitar duplicação.\n{exc}")
+
+    def _find_quote(self):
+        if self.checkout_payload:
+            QMessageBox.warning(self, "Venda pendente", "Conclua a tentativa de venda antes de buscar outro orçamento.")
+            return
+        kind, ok = QInputDialog.getItem(self, "Buscar orçamento", "Pesquisar por:", ["Número", "CPF"], 0, False)
+        if not ok:
+            return
+        query, ok = QInputDialog.getText(self, "Buscar orçamento", kind + ":")
+        if not ok or not query.strip():
+            return
+        try:
+            quotes = self.api.buscar_orcamentos(query.strip(), 'cpf' if kind == 'CPF' else 'numero')
+            if not quotes:
+                QMessageBox.information(self, "Orçamentos", "Nenhum orçamento encontrado nesta empresa.")
+                return
+            labels = [f"#{q['id']} · {q['cliente']['nome']} · R$ {q['total']} · {q['estado']} · até {q['validade']}" for q in quotes]
+            choice, ok = QInputDialog.getItem(self, "Orçamentos", "Selecione:", labels, 0, False)
+            if not ok:
+                return
+            quote = quotes[labels.index(choice)]
+            action, ok = QInputDialog.getItem(self, "Orçamento", "Ação:", ['Imprimir novamente', 'Carregar para venda'], 0, False)
+            if not ok:
+                return
+            if action == 'Imprimir novamente':
+                self._show_saved_quote(quote)
+                return
+            if quote['estado'] != 'ABERTO':
+                QMessageBox.warning(self, "Orçamento", "Somente orçamentos abertos e dentro da validade podem ser convertidos.")
+                return
+            if self.cart and QMessageBox.question(self, "Substituir carrinho", "Substituir os itens atuais pelos itens do orçamento?") != QMessageBox.StandardButton.Yes:
+                return
+            products = self.api.produtos()
+            products = products.get('results', []) if isinstance(products, dict) else products
+            catalog = {int(product['id']): product for product in products}
+            cart, changed = {}, False
+            for item in quote['itens']:
+                product = catalog.get(int(item['produto']))
+                if not product:
+                    raise ValueError('Há produto indisponível no orçamento. Atualize o cadastro antes de converter.')
+                changed = changed or Decimal(str(product['preco_venda'])) != Decimal(item['preco_venda'])
+                cart[int(item['produto'])] = {'produto': product, 'quantidade': Decimal(item['quantidade']), 'desconto': Decimal(item['desconto'])}
+            if changed and QMessageBox.question(self, "Preços atualizados", "Os preços mudaram desde o orçamento. Carregar os preços atuais para conferência antes do pagamento?") != QMessageBox.StandardButton.Yes:
+                return
+            self.total_discount = None
+            self.cart = cart
+            self.selected_customer = quote['cliente']
+            self.loaded_quote = quote['id']
+            self._render_cart()
+            self.status.setText(f"Orçamento #{quote['id']} · {quote['cliente']['nome']} · confira e finalize com F2")
+        except Exception as exc:
+            QMessageBox.warning(self, "Orçamento", str(exc))
 
     def _checkout(self):
+        if self.checkout_payload:
+            self._submit_checkout(self.checkout_payload)
+            return
         if not self.cash_id:
             QMessageBox.warning(self, "Caixa", "Abra o caixa com conexão antes de vender.")
             return
         if not self.cart:
             return
         total = sum(
-            (Decimal(str(item["produto"]["preco_venda"])) * item["quantidade"]
+            ((Decimal(str(item["produto"]["preco_venda"])) * item["quantidade"]).quantize(Decimal("0.01"))
              - Decimal(str(item.get("desconto", "0")))
              for item in self.cart.values()),
             Decimal("0"),
         ).quantize(Decimal("0.01"))
-        credit = Decimal("0.00")
-        customer_id = None
-        credit_value, ok = QInputDialog.getDouble(
-            self, "Venda a prazo", "Valor a lançar em conta do cliente (R$):",
-            0.00, 0.00, float(total), 2,
-        )
-        if not ok:
+        customer = self._identify_customer()
+        if not customer:
             return
-        credit = Decimal(str(credit_value)).quantize(Decimal("0.01"))
-        if credit > 0:
-            try:
-                customers = self.api.clientes()
-            except Exception as exc:
-                QMessageBox.critical(self, "Venda a prazo", f"É necessário estar conectado para consultar clientes: {exc}")
-                return
-            if not customers:
-                QMessageBox.warning(self, "Venda a prazo", "Cadastre o cliente no painel web antes de lançar crédito.")
-                return
-            choices = [f"{item['nome']} · limite R$ {Decimal(str(item['limite_credito'])):.2f}" for item in customers]
-            selected, accepted = QInputDialog.getItem(self, "Venda a prazo", "Cliente:", choices, 0, False)
-            if not accepted:
-                return
-            customer_id = customers[choices.index(selected)]["id"]
-        payments = self._collect_payments(total - credit)
-        if payments is None:
+        customer_id = customer['id']
+        dialog = PaymentDialog(total, customer, self)
+        def change_discount():
+            self._discount_cart_item()
+            gross = sum(((Decimal(str(item['produto']['preco_venda'])) * item['quantidade']).quantize(Decimal('.01')) for item in self.cart.values()), Decimal('0'))
+            discount = sum((Decimal(str(item.get('desconto', '0'))) for item in self.cart.values()), Decimal('0'))
+            return gross, discount
+        dialog.configure_discount(change_discount, self.tenant_role in ('ADMIN', 'GERENTE'))
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
+        payments, credit = dialog.payments, dialog.credit
+        total = dialog.total
         self.last_payments = payments
         key = str(uuid.uuid4())
         payload = {
@@ -854,6 +886,17 @@ class PDVWindow(QMainWindow):
             ],
             "pagamentos": payments,
         }
+        if self.loaded_quote:
+            payload['orcamento'] = self.loaded_quote
+            payload['total_confirmado'] = str(total)
+        self.store.save_checkout_attempt(self.tenant_id, self.api.username, {
+            'payload': payload, 'cliente': self.selected_customer,
+            'cart': {str(pk): {'produto': item['produto'], 'quantidade': str(item['quantidade']), 'desconto': str(item.get('desconto', '0'))} for pk, item in self.cart.items()}})
+        self.checkout_payload = payload
+        self.company.setEnabled(False)
+        self._submit_checkout(payload)
+
+    def _submit_checkout(self, payload):
         try:
             response = self.api.registrar_venda(payload)
             receipt = self._build_receipt(response["id"])
@@ -867,20 +910,31 @@ class PDVWindow(QMainWindow):
             box.exec()
             if box.clickedButton() == open_button:
                 QDesktopServices.openUrl(QUrl.fromLocalFile(str(receipt_path)))
+            self.store.clear_checkout_attempt(self.tenant_id, self.api.username)
+            self.checkout_payload = None
+            self.company.setEnabled(True)
+            self.total_discount = None
+            self.loaded_quote = None
+            self.selected_customer = None
             self.cart.clear()
             self._render_cart()
             self._load_catalog()
-        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
-            self.store.queue_sale(self.tenant_id, payload, str(exc))
-            QMessageBox.warning(
-                self, "Venda pendente",
-                "Sem conexão. A venda foi guardada neste computador para sincronização. "
-                "A sincronização exige caixa, estoque e valores válidos.\n\n" + str(exc),
-            )
-        except Exception as exc:
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+            QMessageBox.warning(self, "Venda pendente de confirmação",
+                "A resposta do servidor não chegou. Clique em Finalizar novamente para consultar/concluir a mesma venda, sem duplicar. Não altere o carrinho nem troque de empresa até confirmar.")
+        except requests.HTTPError as exc:
+            if exc.response is not None and 400 <= exc.response.status_code < 500:
+                self.store.clear_checkout_attempt(self.tenant_id, self.api.username)
+                self.checkout_payload = None
+                self.company.setEnabled(True)
             QMessageBox.critical(self, "Venda recusada", str(exc))
+        except Exception as exc:
+            QMessageBox.critical(self, "Confirmação pendente", "Mantenha a tentativa e clique em Finalizar novamente. " + str(exc))
 
     def _create_web_order(self):
+        if self.checkout_payload:
+            QMessageBox.warning(self, "Venda pendente", "Finalize a tentativa pendente antes de alterar o carrinho.")
+            return
         if not self.cart:
             QMessageBox.information(self, "Carrinho vazio", "Adicione produtos antes de criar o pedido.")
             return
@@ -978,12 +1032,14 @@ class PDVWindow(QMainWindow):
                     self.company_info.get("inscricao_estadual"), self.company_info.get("endereco_documento"),
                     self.company_info.get("telefone"), self.company_info.get("email")]
         tax_id = "".join(f"<div>{html.escape(str(value))}</div>" for value in identity if value)
+        if self.selected_customer:
+            tax_id += "<div>Cliente: " + html.escape(self.selected_customer['nome']) + " · CPF: " + html.escape(self.selected_customer.get('documento', '')) + "</div>"
         payment_labels = {
             "DINHEIRO": "Dinheiro", "PIX": "PIX",
             "CARTAO": "Cartão", "OUTRO": "Outro",
         }
         payment_text = ", ".join(
-            f"{payment_labels.get(p['meio'], p['meio'])}: R$ {Decimal(str(p['valor'])):.2f}"
+            f"{p.get('referencia_externa') or payment_labels.get(p['meio'], p['meio'])}: R$ {Decimal(str(p['valor'])):.2f}"
             for p in self.last_payments
         )
         change = sum((Decimal(str(p.get("troco", "0"))) for p in self.last_payments), Decimal("0"))
@@ -1137,6 +1193,9 @@ button {{ width:100%; padding:10px; margin:12px 0; }}
             QMessageBox.critical(self, "Falha na movimentação", str(exc))
 
     def _close_cash(self):
+        if self.checkout_payload:
+            QMessageBox.warning(self, "Venda pendente", "Confirme a venda pendente antes de fechar o caixa.")
+            return
         if not self.cash_id:
             return
         try:

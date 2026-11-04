@@ -206,3 +206,103 @@ class CompanyDocumentSettingsTests(TestCase):
     def test_other_tenant_cannot_edit_company(self):
         other = Empresa.objects.create(nome='Outra', slug='outra-fiscal')
         self.assertEqual(self.client.get(f'/empresa/{other.pk}/configuracao/').status_code, 403)
+
+
+class DesktopCustomerQuoteFlowTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user('desktop-cashier', password='test-only')
+        self.company = Empresa.objects.create(nome='PDV QA', slug='pdv-qa')
+        self.member = MembroEmpresa.objects.create(empresa=self.company, usuario=self.user, papel='CAIXA')
+        category = Categoria.objects.create(empresa=self.company, nome='QA')
+        self.product = Produto.objects.create(empresa=self.company, categoria=category, codigo='QA', nome='Item', unidade='UN', preco_venda='10', custo_medio='5', estoque_atual='100')
+        self.api = APIClient()
+        self.api.force_authenticate(self.user)
+        self.headers = {'HTTP_X_EMPRESA_ID': str(self.company.pk)}
+        self.customer = self.api.post('/api/v1/clientes/cpf/', {'cpf': '529.982.247-25', 'nome': 'Cliente QA', 'limite_credito': '9000'}, format='json', **self.headers)
+        self.assertEqual(self.customer.status_code, 201, self.customer.data)
+        self.customer = self.customer.data
+
+    def create_quote(self):
+        from django.utils import timezone
+        payload = {'chave': str(uuid.uuid4()), 'cliente': self.customer['id'], 'validade': timezone.localdate().isoformat(), 'itens': [{'produto': self.product.pk, 'quantidade': '2', 'desconto': '0'}]}
+        response = self.api.post('/api/v1/orcamentos/', payload, format='json', **self.headers)
+        self.assertEqual(response.status_code, 201, response.data)
+        return response.data, payload
+
+    def test_cashier_lookup_duplicate_cpf_and_no_credit_escalation(self):
+        response = self.api.get('/api/v1/clientes/cpf/', {'cpf': '52998224725'}, **self.headers)
+        self.assertEqual(response.data['id'], self.customer['id'])
+        self.assertEqual(Decimal(response.data['limite_credito']), 0)
+        repeated = self.api.post('/api/v1/clientes/cpf/', {'cpf': '52998224725', 'nome': 'Outro'}, format='json', **self.headers)
+        self.assertEqual(repeated.status_code, 200)
+        self.assertEqual(Cliente.objects.filter(empresa=self.company).count(), 1)
+        invalid = self.api.get('/api/v1/clientes/cpf/', {'cpf': '11111111111'}, **self.headers)
+        self.assertEqual(invalid.status_code, 400)
+
+    def test_quote_search_retry_and_stock_not_reserved(self):
+        quote, payload = self.create_quote()
+        repeated = self.api.post('/api/v1/orcamentos/', payload, format='json', **self.headers)
+        self.assertEqual(repeated.status_code, 200)
+        self.assertEqual(repeated.data['id'], quote['id'])
+        for params in ({'busca': str(quote['id'])}, {'busca': '529.982.247-25', 'tipo': 'cpf'}):
+            result = self.api.get('/api/v1/orcamentos/', params, **self.headers)
+            self.assertEqual(result.data[0]['id'], quote['id'])
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.estoque_atual, Decimal('100'))
+
+    def test_cross_company_and_cashier_discount_rejected(self):
+        quote, payload = self.create_quote()
+        other = Empresa.objects.create(nome='Outra', slug='other-desktop')
+        MembroEmpresa.objects.create(empresa=other, usuario=self.user, papel='ADMIN')
+        response = self.api.get(f"/api/v1/orcamentos/{quote['id']}/", HTTP_X_EMPRESA_ID=str(other.pk))
+        self.assertEqual(response.status_code, 404)
+        payload['chave'] = str(uuid.uuid4())
+        payload['itens'][0]['desconto'] = '1'
+        response = self.api.post('/api/v1/orcamentos/', payload, format='json', **self.headers)
+        self.assertEqual(response.status_code, 400)
+
+    def test_quote_conversion_is_idempotent_and_cannot_be_sold_twice(self):
+        quote, _ = self.create_quote()
+        cash = self.api.post('/api/v1/caixas/abrir/', {'dispositivo_id': 'desktop'}, format='json', **self.headers).data
+        payload = {'idempotency_key': str(uuid.uuid4()), 'caixa': cash['id'], 'cliente': self.customer['id'], 'orcamento': quote['id'], 'total_confirmado': '20.00', 'itens': [{'produto': self.product.pk, 'quantidade': '2', 'desconto': '0'}], 'pagamentos': [{'meio': 'PIX', 'valor': '10'}, {'meio': 'DINHEIRO', 'valor': '10', 'valor_recebido': '15', 'troco': '5'}]}
+        sale = self.api.post('/api/v1/vendas/', payload, format='json', **self.headers)
+        self.assertEqual(sale.status_code, 201, sale.data)
+        retry = self.api.post('/api/v1/vendas/', payload, format='json', **self.headers)
+        self.assertEqual(retry.status_code, 200, retry.data)
+        self.assertEqual(sale.data['id'], retry.data['id'])
+        payload['idempotency_key'] = str(uuid.uuid4())
+        self.assertEqual(self.api.post('/api/v1/vendas/', payload, format='json', **self.headers).status_code, 400)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.estoque_atual, Decimal('98'))
+
+    def test_expired_quote_and_changed_prices_block_conversion(self):
+        from .models import Orcamento
+        from django.utils import timezone
+        from datetime import timedelta
+        quote, _ = self.create_quote()
+        cash = self.api.post('/api/v1/caixas/abrir/', {'dispositivo_id': 'desktop'}, format='json', **self.headers).data
+        payload = {'idempotency_key': str(uuid.uuid4()), 'caixa': cash['id'], 'cliente': self.customer['id'], 'orcamento': quote['id'], 'total_confirmado': '20.00', 'itens': [{'produto': self.product.pk, 'quantidade': '2'}], 'pagamentos': [{'meio': 'PIX', 'valor': '20'}]}
+        self.product.preco_venda = Decimal('11')
+        self.product.save()
+        self.assertEqual(self.api.post('/api/v1/vendas/', payload, format='json', **self.headers).status_code, 400)
+        Orcamento.objects.filter(pk=quote['id']).update(validade=timezone.localdate() - timedelta(days=1))
+        self.assertEqual(self.api.post('/api/v1/vendas/', payload, format='json', **self.headers).status_code, 400)
+
+    def test_total_discount_and_zero_total_require_authorized_role(self):
+        self.member.papel = 'ADMIN'
+        self.member.save()
+        cash = self.api.post('/api/v1/caixas/abrir/', {'dispositivo_id': 'desktop'}, format='json', **self.headers).data
+        payload = {'idempotency_key': str(uuid.uuid4()), 'caixa': cash['id'], 'cliente': self.customer['id'], 'itens': [{'produto': self.product.pk, 'quantidade': '2', 'desconto': '2'}], 'pagamentos': [{'meio': 'PIX', 'valor': '18'}]}
+        sale = self.api.post('/api/v1/vendas/', payload, format='json', **self.headers)
+        self.assertEqual(sale.status_code, 201, sale.data)
+        self.assertEqual(Decimal(sale.data['total']), Decimal('18'))
+        payload['idempotency_key'] = str(uuid.uuid4())
+        payload['itens'][0]['desconto'] = '20'
+        payload['pagamentos'] = []
+        sale = self.api.post('/api/v1/vendas/', payload, format='json', **self.headers)
+        self.assertEqual(sale.status_code, 201, sale.data)
+        self.assertEqual(Decimal(sale.data['total']), 0)
+        self.member.papel = 'CAIXA'
+        self.member.save()
+        payload['idempotency_key'] = str(uuid.uuid4())
+        self.assertEqual(self.api.post('/api/v1/vendas/', payload, format='json', **self.headers).status_code, 400)

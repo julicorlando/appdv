@@ -14,6 +14,10 @@ class LocalStore:
     def __init__(self, path=None):
         self.path = str(path or database_path())
         with self.connect() as db:
+            db.execute("""CREATE TABLE IF NOT EXISTS checkout_attempts (
+                tenant_id TEXT NOT NULL, operator TEXT NOT NULL, payload TEXT NOT NULL,
+                PRIMARY KEY (tenant_id, operator)
+            )""")
             db.execute("""CREATE TABLE IF NOT EXISTS products (
                 tenant_id TEXT NOT NULL, product_id INTEGER NOT NULL,
                 payload TEXT NOT NULL, updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -102,3 +106,16 @@ class LocalStore:
                 "DELETE FROM held_sales WHERE id=? AND tenant_id=?",
                 (int(sale_id), str(tenant_id)),
             )
+
+    def save_checkout_attempt(self, tenant_id, operator, payload):
+        with self.connect() as db:
+            db.execute("INSERT OR REPLACE INTO checkout_attempts (tenant_id, operator, payload) VALUES (?, ?, ?)", (str(tenant_id), str(operator), json.dumps(payload)))
+
+    def checkout_attempt(self, tenant_id, operator):
+        with self.connect() as db:
+            row = db.execute("SELECT payload FROM checkout_attempts WHERE tenant_id=? AND operator=?", (str(tenant_id), str(operator))).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def clear_checkout_attempt(self, tenant_id, operator):
+        with self.connect() as db:
+            db.execute("DELETE FROM checkout_attempts WHERE tenant_id=? AND operator=?", (str(tenant_id), str(operator)))

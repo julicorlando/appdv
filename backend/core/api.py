@@ -135,7 +135,47 @@ class VendaViewSet(viewsets.GenericViewSet, mixins.ListModelMixin, mixins.Retrie
 
     def create(self, request, *args, **kwargs):
         empresa = self.get_empresa()
-        venda, criada = registrar_venda(empresa=empresa, usuario=request.user, dados=request.data)
+        if request.data.get("orcamento"):
+            import uuid
+            try:
+                uuid.UUID(str(request.data.get('idempotency_key')))
+            except (ValueError, TypeError, AttributeError):
+                raise ValidationError({'idempotency_key': 'Informe um UUID válido.'})
+            from .models import Orcamento
+            from .orcamentos import dados_orcamento
+            with transaction.atomic():
+                try:
+                    obj = Orcamento.objects.select_for_update().get(pk=request.data['orcamento'], empresa=empresa)
+                except (Orcamento.DoesNotExist, ValueError, TypeError):
+                    raise ValidationError({'orcamento': 'Orçamento não encontrado nesta empresa.'})
+                if obj.venda_id:
+                    if str(obj.venda.idempotency_key) == str(request.data.get('idempotency_key')) and obj.venda.operador_id == request.user.pk:
+                        return Response(VendaSerializer(obj.venda).data)
+                    raise ValidationError({'orcamento': 'Orçamento já convertido em venda.'})
+                if dados_orcamento(obj)['estado'] != 'ABERTO':
+                    raise ValidationError({'orcamento': 'Orçamento vencido ou cancelado. Gere um novo orçamento.'})
+                def assinatura(linhas):
+                    try:
+                        return sorted((int(l['produto']), Decimal(str(l['quantidade'])), Decimal(str(l.get('desconto', '0')))) for l in linhas)
+                    except (TypeError, KeyError, ValueError, InvalidOperation):
+                        raise ValidationError({'itens': 'Itens inválidos.'})
+                if assinatura(request.data.get('itens', [])) != assinatura(obj.itens) or str(request.data.get('cliente')) != str(obj.cliente_id):
+                    raise ValidationError({'orcamento': 'Cliente ou itens diferem do orçamento. Salve um novo orçamento para alterar.'})
+                if Venda.objects.filter(empresa=empresa, idempotency_key=request.data.get('idempotency_key')).exists():
+                    raise ValidationError({'idempotency_key': 'Chave já usada por outra venda.'})
+                # Same lock order as registrar_venda: caixa, then products.
+                Caixa.objects.select_for_update().filter(pk=request.data.get('caixa'), empresa=empresa, operador=request.user).first()
+                products = {p.pk: p for p in Produto.objects.select_for_update().filter(empresa=empresa, ativo=True, pk__in=[l['produto'] for l in obj.itens]).order_by('pk')}
+                if len(products) != len(obj.itens):
+                    raise ValidationError({'orcamento': 'Produto indisponível. Revise o orçamento.'})
+                total_atual = sum(((products[l['produto']].preco_venda * Decimal(l['quantidade'])).quantize(Decimal('.01')) - Decimal(l['desconto']) for l in obj.itens), Decimal('0')).quantize(Decimal('.01'))
+                if str(request.data.get('total_confirmado')) != str(total_atual):
+                    raise ValidationError({'orcamento': 'Preços alterados. Busque o orçamento novamente para conferir.'})
+                venda, criada = registrar_venda(empresa=empresa, usuario=request.user, dados=request.data)
+                obj.venda = venda
+                obj.save(update_fields=['venda'])
+        else:
+            venda, criada = registrar_venda(empresa=empresa, usuario=request.user, dados=request.data)
         data = VendaSerializer(venda).data
         return Response(data, status=status.HTTP_201_CREATED if criada else status.HTTP_200_OK)
 
@@ -592,3 +632,55 @@ class FinalizarPedidoWebView(TenantAPIView):
             "pedido_id": pedido.pk, "estado": pedido.estado,
             "venda_id": venda.pk, "total": str(venda.total),
         })
+
+
+class ClienteCPFView(TenantAPIView):
+    def get(self, request):
+        from .models import Cliente
+        from .orcamentos import normalizar_cpf, dados_cliente
+        empresa, membro = self.get_empresa(request)
+        cliente = Cliente.objects.filter(empresa=empresa, documento=normalizar_cpf(request.query_params.get('cpf', ''))).first()
+        if cliente and not cliente.ativo:
+            raise ValidationError({'cliente': 'Cadastro inativo. Solicite revisão ao administrador.'})
+        return Response(dados_cliente(cliente) if cliente else None)
+
+    def post(self, request):
+        from .models import Cliente
+        from .orcamentos import normalizar_cpf, dados_cliente
+        empresa, membro = self.get_empresa(request)
+        cpf = normalizar_cpf(request.data.get('cpf', ''))
+        nome = str(request.data.get('nome', '')).strip()
+        if not nome or len(nome) > 180:
+            raise ValidationError({'nome': 'Informe o nome do cliente, até 180 caracteres.'})
+        cliente, criado = Cliente.objects.get_or_create(empresa=empresa, documento=cpf,
+            defaults={'nome': nome, 'telefone': str(request.data.get('telefone', ''))[:30], 'limite_credito': 0})
+        if not cliente.ativo:
+            raise ValidationError({'cliente': 'Cadastro inativo. Solicite revisão ao administrador.'})
+        return Response(dados_cliente(cliente), status=201 if criado else 200)
+
+
+class OrcamentosView(TenantAPIView):
+    def get(self, request, orcamento_id=None):
+        from .models import Orcamento
+        from .orcamentos import normalizar_cpf, dados_orcamento
+        empresa, membro = self.get_empresa(request)
+        qs = Orcamento.objects.filter(empresa=empresa).select_related('cliente')
+        if orcamento_id is not None:
+            from django.shortcuts import get_object_or_404
+            return Response(dados_orcamento(get_object_or_404(qs, pk=orcamento_id)))
+        query = request.query_params.get('busca', '').strip()
+        if not query:
+            raise ValidationError({'busca': 'Informe número do orçamento ou CPF.'})
+        if request.query_params.get('tipo') == 'cpf':
+            qs = qs.filter(cliente__documento=normalizar_cpf(query))
+        elif query.isascii() and query.isdigit():
+            qs = qs.filter(pk=int(query))
+        else:
+            raise ValidationError({'busca': 'Número de orçamento inválido.'})
+        return Response([dados_orcamento(obj) for obj in qs.order_by('-criado_em')[:100]])
+
+    def post(self, request):
+        from .orcamentos import salvar_orcamento, dados_orcamento
+        empresa, membro = self.get_empresa(request)
+        obj, criado = salvar_orcamento(empresa, membro, request.data)
+        return Response(dados_orcamento(obj), status=201 if criado else 200)
