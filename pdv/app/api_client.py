@@ -133,7 +133,19 @@ class ArmazemAPI:
         return response.json()
 
     def cliente_cpf(self, cpf):
-        return self._request('GET', '/api/v1/clientes/cpf/', params={'cpf': cpf}).json()
+        response = self._request('GET', '/api/v1/clientes/cpf/', params={'cpf': cpf})
+        # Older servers returned an empty 200 response for an unknown CPF.
+        if not response.content.strip():
+            return None
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise ValueError("O servidor retornou uma resposta inválida ao consultar o CPF. Tente novamente.") from exc
+        if data is None or (isinstance(data, dict) and data.get('encontrado') is False):
+            return None
+        if not isinstance(data, dict) or not data.get('id') or not data.get('nome'):
+            raise ValueError("O servidor não retornou um cadastro de cliente válido.")
+        return data
 
     def cadastrar_cliente_cpf(self, cpf, nome, telefone):
         return self._request('POST', '/api/v1/clientes/cpf/', json={'cpf': cpf, 'nome': nome, 'telefone': telefone}).json()

@@ -642,7 +642,7 @@ class ClienteCPFView(TenantAPIView):
         cliente = Cliente.objects.filter(empresa=empresa, documento=normalizar_cpf(request.query_params.get('cpf', ''))).first()
         if cliente and not cliente.ativo:
             raise ValidationError({'cliente': 'Cadastro inativo. Solicite revisão ao administrador.'})
-        return Response(dados_cliente(cliente) if cliente else None)
+        return Response(dados_cliente(cliente) if cliente else {"encontrado": False})
 
     def post(self, request):
         from .models import Cliente

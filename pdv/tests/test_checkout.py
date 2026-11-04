@@ -80,3 +80,34 @@ class PendingCheckoutStorageTests(unittest.TestCase):
             self.assertIsNone(store.checkout_attempt('1', 'other'))
             store.clear_checkout_attempt('1', 'cashier')
             self.assertIsNone(store.checkout_attempt('1', 'cashier'))
+
+
+class CustomerLookupResponseTests(unittest.TestCase):
+    def test_empty_legacy_and_explicit_missing_customer_start_registration(self):
+        from app.api_client import ArmazemAPI
+        from unittest.mock import Mock
+        api = ArmazemAPI('https://example.com')
+        for content, data in [(b'', None), (b'null', None), (b'{"encontrado":false}', {'encontrado': False})]:
+            response = Mock(content=content)
+            response.json.return_value = data
+            with patch.object(api, '_request', return_value=response):
+                self.assertIsNone(api.cliente_cpf('52998224725'))
+        response = Mock(content=b'{"id":1,"nome":"Cliente"}')
+        response.json.return_value = {'id': 1, 'nome': 'Cliente'}
+        with patch.object(api, '_request', return_value=response):
+            self.assertEqual(api.cliente_cpf('52998224725')['id'], 1)
+
+    def test_unknown_cpf_opens_name_and_phone_registration(self):
+        from unittest.mock import Mock
+        app = QApplication.instance() or QApplication([])
+        api = Mock()
+        api.cliente_cpf.return_value = None
+        api.cadastrar_cliente_cpf.return_value = {'id': 42, 'nome': 'Cliente QA', 'documento': '52998224725'}
+        with patch.object(PDVWindow, '_select_company'), patch('app.main.LocalStore'):
+            window = PDVWindow(api)
+        with patch('app.main.QInputDialog.getText', side_effect=[('52998224725', True), ('Cliente QA', True), ('', True)]) as inputs:
+            customer = window._identify_customer()
+        self.assertEqual(inputs.call_count, 3)
+        self.assertEqual(customer['id'], 42)
+        api.cadastrar_cliente_cpf.assert_called_once_with('52998224725', 'Cliente QA', '')
+        window.close()

@@ -306,3 +306,15 @@ class DesktopCustomerQuoteFlowTests(TestCase):
         self.member.save()
         payload['idempotency_key'] = str(uuid.uuid4())
         self.assertEqual(self.api.post('/api/v1/vendas/', payload, format='json', **self.headers).status_code, 400)
+
+
+class UnknownCPFResponseTests(TestCase):
+    def test_unknown_cpf_returns_explicit_json_instead_of_empty_body(self):
+        user = get_user_model().objects.create_user('cpf-lookup', password='test-only')
+        company = Empresa.objects.create(nome='CPF QA', slug='cpf-qa')
+        MembroEmpresa.objects.create(empresa=company, usuario=user, papel='CAIXA')
+        api = APIClient()
+        api.force_authenticate(user)
+        response = api.get('/api/v1/clientes/cpf/', {'cpf': '52998224725'}, HTTP_X_EMPRESA_ID=str(company.pk))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {'encontrado': False})
