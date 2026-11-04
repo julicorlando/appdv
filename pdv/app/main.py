@@ -714,7 +714,13 @@ class PDVWindow(QMainWindow):
         company = html.escape(self.company.currentText())
         customer_html = f"<p><b>Cliente:</b> {html.escape(customer.strip())}</p>" if customer.strip() else ""
         logo_path = Path(asset_path("appdv-logo-web.png"))
-        logo_html = f"<img src='{logo_path.as_uri()}' alt='ApPdv' style='max-width:220px;max-height:70px'>" if logo_path.exists() else "<b>ApPdv</b>"
+        # Embed images so saved budgets remain printable after PyInstaller cleanup.
+        system_logo = ("data:image/png;base64," + base64.b64encode(
+            logo_path.read_bytes()).decode("ascii")) if logo_path.exists() else ""
+        company_logo = html.escape(str(self.company_info.get("logo_data_url") or ""), quote=True)
+        system_img = f"<img src='{system_logo}' alt='ApPdv' style='max-width:180px;max-height:60px'>" if system_logo else "<b>ApPdv</b>"
+        company_img = f"<img src='{company_logo}' alt='Logo {company}' style='max-width:200px;max-height:90px'>" if company_logo else ""
+        logo_html = f"<div style='display:flex;align-items:center;gap:20px;flex-wrap:wrap'>{system_img}{company_img}</div>"
         quote = f"""<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Orçamento {quote_id}</title>
 <style>body{{font:14px Arial,sans-serif;margin:28px;color:#17202a}}header{{display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #203879;padding-bottom:14px}}h1{{color:palette(window-text)}}table{{width:100%;border-collapse:collapse;margin-top:22px}}th,td{{padding:10px;border-bottom:1px solid #d9dee8;text-align:left}}th{{background:#edf1f7}}.summary{{text-align:right;font-size:17px;line-height:1.8;margin-top:18px}}.note{{background:#f4f6f9;padding:12px;border-radius:8px;margin-top:20px}}button{{padding:12px 20px;background:#203879;color:white;border:0;border-radius:6px;font-weight:bold}}@media print{{button{{display:none}}body{{margin:0}}}}</style></head>
 <body><header><div>{logo_html}<p>{company}</p></div><div><h1>ORÇAMENTO</h1><b>Nº {quote_id}</b><br>{datetime.now().strftime('%d/%m/%Y %H:%M')}</div></header>
