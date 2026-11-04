@@ -181,8 +181,11 @@ class PendingSyncWorker(QThread):
         self.client = ArmazemAPI(api.base_url, empresa_id=api.empresa_id, timeout=4)
         self.client.session.headers.update(api.session.headers)
         self.client.refresh_token = api.refresh_token
+        self.client.username = api.username
 
     def run(self):
+        pending = len(self.rows)
+        errors = []
         for key, raw in self.rows:
             payload = json.loads(raw)
             try:
@@ -191,12 +194,18 @@ class PendingSyncWorker(QThread):
                     saved = self.client.cadastrar_cliente_cpf(customer['documento'], customer['nome'], customer.get('telefone', ''))
                     payload['cliente'] = saved['id']
                 response = self.client.registrar_venda(payload)
+                pending -= 1
                 self.result.emit(key, '', response)
             except (requests.ConnectionError, requests.Timeout):
                 self.result.emit(key, 'Sem conexão; nova tentativa automática.', None)
-                break
+                return
             except Exception as exc:
+                errors.append(f'{key[:8]}: {exc}')
                 self.result.emit(key, str(exc), None)
+        try:
+            self.client.heartbeat(pending, '\n'.join(errors))
+        except requests.RequestException:
+            pass
 
 
 class PDVWindow(QMainWindow):
@@ -937,6 +946,17 @@ class PDVWindow(QMainWindow):
             discount = sum((Decimal(str(item.get('desconto', '0'))) for item in self.cart.values()), Decimal('0'))
             return gross, discount
         dialog.configure_discount(change_discount, True)
+        gross = sum(((Decimal(str(i['produto']['preco_venda']))*i['quantidade']).quantize(Decimal('.01')) for i in self.cart.values()),Decimal('0'))
+        manual = sum((Decimal(str(i.get('desconto','0'))) for i in self.cart.values()),Decimal('0'))
+        self.active_automatic_discount = Decimal('0')
+        def policy_discount(value, automatic):
+            self.total_discount = None
+            weights = [(Decimal(str(i['produto']['preco_venda']))*i['quantidade']).quantize(Decimal('.01')) for i in self.cart.values()]
+            for i,d in zip(self.cart.values(),distribute_discount(weights,'R$',value)):
+                i['desconto'] = d
+            self.active_automatic_discount = automatic
+            self._render_cart()
+        dialog.configure_policy(self.company_info.get('politica_desconto',{}),gross,manual,policy_discount)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         payments, credit = dialog.payments, dialog.credit
@@ -964,7 +984,7 @@ class PDVWindow(QMainWindow):
         if credit > 0 and not self.online:
             QMessageBox.warning(self, "Venda a prazo", "Venda a prazo exige conexão para verificar o limite de crédito.")
             return
-        if not self._ensure_discount_approval(key, payload['itens']):
+        if not self._ensure_discount_approval(key, payload['itens'], allow_auto=True):
             return
         if self.discount_approval:
             payload['autorizacao_desconto'] = self.discount_approval[1]
@@ -1369,10 +1389,12 @@ button {{ width:100%; padding:10px; margin:12px 0; }}
     def _cart_lines(self):
         return [{'produto': pk, 'quantidade': str(item['quantidade']), 'desconto': str(item.get('desconto', '0'))} for pk, item in self.cart.items()]
 
-    def _ensure_discount_approval(self, key, lines):
+    def _ensure_discount_approval(self, key, lines, allow_auto=False):
         gross = sum(((Decimal(str(item['produto']['preco_venda'])) * item['quantidade']).quantize(Decimal('.01')) for item in self.cart.values()), Decimal('0'))
         discount = sum((Decimal(str(line.get('desconto', '0'))) for line in lines), Decimal('0'))
-        if discount * 100 <= gross * 5:
+        policy=self.company_info.get('politica_desconto',{})
+        limit=Decimal(policy.get('limite_caixa','5')) if policy.get('modo')!='AUTOMATICO' else Decimal('0')
+        if discount*100<=gross*limit or (allow_auto and discount<=getattr(self,'active_automatic_discount',Decimal('0'))):
             return True
         signature = json.dumps([key, lines], sort_keys=True)
         if self.discount_approval and self.discount_approval[0] == signature:
@@ -1397,8 +1419,6 @@ button {{ width:100%; padding:10px; margin:12px 0; }}
         if not self.tenant_id or not self.cash_id or (self.sync_worker and self.sync_worker.isRunning()):
             return
         rows = [(key, raw) for key, raw in self.store.pending_sales(self.tenant_id) if json.loads(raw).get('operador_local') == self.api.username]
-        if not rows:
-            return
         tenant = self.tenant_id
         self.sync_worker = PendingSyncWorker(self.api, rows, self)
         def result(key, error, response):

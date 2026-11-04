@@ -185,3 +185,19 @@ class OfflineCheckoutTests(unittest.TestCase):
             self.assertEqual(window.store.customer('1','52998224725')['nome'], 'Cliente local')
             self.assertIsNone(window.store.customer('2','52998224725'))
             window.close()
+
+
+class AutomaticPolicyDialogTests(unittest.TestCase):
+    def test_pix_promotion_updates_due_and_payment_validation(self):
+        app = QApplication.instance() or QApplication([])
+        dialog = PaymentDialog(Decimal('100'), {'nome':'Cliente'})
+        applied=[]
+        dialog.configure_policy({'modo':'MISTO','percentual':'5','meio':'PIX','minimo':'50'},Decimal('100'),Decimal('0'),lambda discount,auto:applied.append((discount,auto)))
+        dialog.inputs[1][2].setValue(95)
+        self.assertEqual(dialog.total,Decimal('95'))
+        self.assertTrue(dialog.confirm.isEnabled())
+        dialog.inputs[1][2].setValue(0)
+        dialog.inputs[0][2].setValue(100)
+        self.assertEqual(dialog.total,Decimal('100'))
+        self.assertTrue(dialog.confirm.isEnabled())
+        dialog.close()

@@ -169,7 +169,7 @@ def caixa_web(request, empresa_id):
     ).first()
     return render(request, "caixa_web.html", {
         "loja": membro.empresa, "caixa": caixa,
-        "meios": Transacao.Meio.choices,
+        "meios": [(v,l) for v,l in Transacao.Meio.choices if v != "LOJA"],
     })
 
 
@@ -227,6 +227,8 @@ def empresa_baixa_perda(request, empresa_id, produto_id):
                 raise ValueError("Produto em inventário aberto; aguarde a conclusão.")
             if quantidade > produto.estoque_atual:
                 raise ValueError("A perda informada excede o saldo disponível.")
+            from .management_services import consumir_locais
+            consumir_locais(produto, quantidade)
             produto.estoque_atual -= quantidade
             produto.save(update_fields=("estoque_atual", "atualizado_em"))
             MovimentacaoEstoque.objects.create(

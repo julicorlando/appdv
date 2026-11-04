@@ -107,6 +107,9 @@ def importar_planilha(*, empresa, usuario, arquivo):
                           "setor", "endereco", "codigo_barras"):
                 setattr(product, field, data[field])
             product.categoria = category
+            from .management_services import consumir_locais
+            if data['estoque_atual'] < product.estoque_atual:
+                consumir_locais(product, product.estoque_atual-data['estoque_atual'])
             product.estoque_atual = data["estoque_atual"]
             product.save()
             updated += 1
@@ -210,6 +213,9 @@ def concluir_contagem(*, contagem, usuario, contagens, recontagem=False):
         if not contagem.em_recontagem:
             item.primeira_quantidade = physical
         elif delta:
+            from .management_services import consumir_locais
+            if physical < product.estoque_atual:
+                consumir_locais(product, product.estoque_atual-physical)
             product.estoque_atual = physical
             product.save(update_fields=("estoque_atual", "atualizado_em"))
         item.saldo_sistema = system_balance

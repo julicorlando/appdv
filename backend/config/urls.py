@@ -7,7 +7,8 @@ from core.api import (
     AbrirCaixaView, CaixaResumoView, ClientesView, ContasPagarView, ContasReceberView, CategoriaViewSet, CriarTokenView, DashboardEmpresaAPIView, EmpresaInfoView, FecharCaixaView, MovimentacaoCaixaView,
     MinhasEmpresasView, PedidosWebView, FinalizarPedidoWebView, ProdutoViewSet, VendaViewSet,
 )
-from core.api import ClienteCPFView, OrcamentosView, AutorizarDescontoView
+from core.api import ClienteCPFView, OrcamentosView, AutorizarDescontoView, TerminalHeartbeatView
+from core import management_web as management
 from core import web
 
 router = DefaultRouter()
@@ -24,6 +25,21 @@ urlpatterns = [
     path("master/usuarios/criar/", web.master_criar_usuario, name="master-criar-usuario"),
     path("master/empresas/<int:empresa_id>/status/", web.master_status_empresa, name="master-status-empresa"),
     path("master/empresas/<int:empresa_id>/membros/adicionar/", web.master_adicionar_membro, name="master-adicionar-membro"),
+    path("empresa/<int:empresa_id>/clientes/<int:pk>/editar/",management.cliente_editar,name="cliente-editar"),
+    path("empresa/<int:empresa_id>/orcamentos/",management.orcamentos,name="gestao-orcamentos"),
+    path("empresa/<int:empresa_id>/orcamentos/novo/",management.orcamento_editar,name="gestao-orcamento-novo"),
+    path("empresa/<int:empresa_id>/orcamentos/<int:pk>/",management.orcamento,name="gestao-orcamento"),
+    path("empresa/<int:empresa_id>/orcamentos/<int:pk>/revisar/",management.orcamento_editar,name="gestao-orcamento-editar"),
+    path("empresa/<int:empresa_id>/entregas/",management.entregas,name="gestao-entregas"),
+    path("empresa/<int:empresa_id>/depositos/",management.depositos,name="gestao-depositos"),
+    path("empresa/<int:empresa_id>/devolucoes/",management.devolucoes,name="gestao-devolucoes"),
+    path("empresa/<int:empresa_id>/caixas/",management.caixas,name="gestao-caixas"),
+    path("empresa/<int:empresa_id>/caixas/<int:pk>/",management.caixas,name="gestao-caixa"),
+    path("empresa/<int:empresa_id>/sincronizacao/",management.sincronizacao,name="gestao-sincronizacao"),
+    path("empresa/<int:empresa_id>/descontos/",management.descontos,name="gestao-descontos"),
+    path("empresa/<int:empresa_id>/relatorios/",management.relatorios,name="gestao-relatorios"),
+    path("empresa/<int:empresa_id>/reposicao/",management.reposicao,name="gestao-reposicao"),
+    path("empresa/<int:empresa_id>/fiscal/",management.fiscal,name="gestao-fiscal"),
     path("empresa/<int:empresa_id>/", web.empresa_dashboard, name="empresa-dashboard"),
     path("empresa/<int:empresa_id>/caixa/", web.caixa_web, name="caixa-web"),
     path("empresa/<int:empresa_id>/produtos/", web.empresa_produtos, name="empresa-produtos"),
@@ -49,6 +65,7 @@ urlpatterns = [
     path("api/v1/minhas-empresas/", MinhasEmpresasView.as_view(), name="minhas-empresas"),
     path("api/v1/empresa/", EmpresaInfoView.as_view(), name="empresa-info"),
     path("api/v1/empresa/resumo/", DashboardEmpresaAPIView.as_view(), name="empresa-resumo"),
+    path("api/v1/terminais/heartbeat/", TerminalHeartbeatView.as_view()),
     path("api/v1/descontos/autorizar/", AutorizarDescontoView.as_view(), name="desconto-autorizar"),
     path("api/v1/clientes/cpf/", ClienteCPFView.as_view(), name="cliente-cpf"),
     path("api/v1/orcamentos/", OrcamentosView.as_view(), name="orcamentos"),

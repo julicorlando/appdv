@@ -46,7 +46,10 @@ class EmpresaInfoView(TenantAPIView):
                 conteudo = base64.b64encode(arquivo.read()).decode("ascii")
             tipo = mimetypes.guess_type(empresa.logo.name)[0] or "image/png"
             logo_data_url = f"data:{tipo};base64,{conteudo}"
+        from .models import PoliticaDesconto
+        policy = PoliticaDesconto.objects.filter(empresa=empresa).first()
         return Response({
+            "politica_desconto": {"modo": policy.modo, "limite_caixa": str(policy.limite_caixa), "percentual": str(policy.percentual), "meio": policy.meio, "minimo": str(policy.minimo)} if policy else {"modo":"MANUAL","limite_caixa":"5","percentual":"0","meio":"","minimo":"0"},
             "id": empresa.pk, **empresa.dados_documento(),
             "endereco_documento": empresa.endereco_documento,
             "logo_data_url": logo_data_url,
@@ -136,44 +139,8 @@ class VendaViewSet(viewsets.GenericViewSet, mixins.ListModelMixin, mixins.Retrie
     def create(self, request, *args, **kwargs):
         empresa = self.get_empresa()
         if request.data.get("orcamento"):
-            import uuid
-            try:
-                uuid.UUID(str(request.data.get('idempotency_key')))
-            except (ValueError, TypeError, AttributeError):
-                raise ValidationError({'idempotency_key': 'Informe um UUID válido.'})
-            from .models import Orcamento
-            from .orcamentos import dados_orcamento
-            with transaction.atomic():
-                try:
-                    obj = Orcamento.objects.select_for_update().get(pk=request.data['orcamento'], empresa=empresa)
-                except (Orcamento.DoesNotExist, ValueError, TypeError):
-                    raise ValidationError({'orcamento': 'Orçamento não encontrado nesta empresa.'})
-                if obj.venda_id:
-                    if str(obj.venda.idempotency_key) == str(request.data.get('idempotency_key')) and obj.venda.operador_id == request.user.pk:
-                        return Response(VendaSerializer(obj.venda).data)
-                    raise ValidationError({'orcamento': 'Orçamento já convertido em venda.'})
-                if dados_orcamento(obj)['estado'] != 'ABERTO':
-                    raise ValidationError({'orcamento': 'Orçamento vencido ou cancelado. Gere um novo orçamento.'})
-                def assinatura(linhas):
-                    try:
-                        return sorted((int(l['produto']), Decimal(str(l['quantidade'])), Decimal(str(l.get('desconto', '0')))) for l in linhas)
-                    except (TypeError, KeyError, ValueError, InvalidOperation):
-                        raise ValidationError({'itens': 'Itens inválidos.'})
-                if assinatura(request.data.get('itens', [])) != assinatura(obj.itens) or str(request.data.get('cliente')) != str(obj.cliente_id):
-                    raise ValidationError({'orcamento': 'Cliente ou itens diferem do orçamento. Salve um novo orçamento para alterar.'})
-                if Venda.objects.filter(empresa=empresa, idempotency_key=request.data.get('idempotency_key')).exists():
-                    raise ValidationError({'idempotency_key': 'Chave já usada por outra venda.'})
-                # Same lock order as registrar_venda: caixa, then products.
-                Caixa.objects.select_for_update().filter(pk=request.data.get('caixa'), empresa=empresa, operador=request.user).first()
-                products = {p.pk: p for p in Produto.objects.select_for_update().filter(empresa=empresa, ativo=True, pk__in=[l['produto'] for l in obj.itens]).order_by('pk')}
-                if len(products) != len(obj.itens):
-                    raise ValidationError({'orcamento': 'Produto indisponível. Revise o orçamento.'})
-                total_atual = sum(((products[l['produto']].preco_venda * Decimal(l['quantidade'])).quantize(Decimal('.01')) - Decimal(l['desconto']) for l in obj.itens), Decimal('0')).quantize(Decimal('.01'))
-                if str(request.data.get('total_confirmado')) != str(total_atual):
-                    raise ValidationError({'orcamento': 'Preços alterados. Busque o orçamento novamente para conferir.'})
-                venda, criada = registrar_venda(empresa=empresa, usuario=request.user, dados=request.data)
-                obj.venda = venda
-                obj.save(update_fields=['venda'])
+            from .management_services import vender_orcamento
+            venda, criada = vender_orcamento(empresa, request.user, request.data)
         else:
             venda, criada = registrar_venda(empresa=empresa, usuario=request.user, dados=request.data)
         data = VendaSerializer(venda).data
@@ -278,7 +245,7 @@ class ContasReceberView(TenantAPIView):
             )
             valor = Decimal(str(request.data.get("valor")))
             meio = str(request.data.get("meio"))
-            if not valor.is_finite() or valor <= 0 or valor > conta.saldo or meio not in Transacao.Meio.values:
+            if not valor.is_finite() or valor <= 0 or valor > conta.saldo or meio not in ("DINHEIRO","PIX","CARTAO","OUTRO"):
                 raise ValueError
         except (ContaReceber.DoesNotExist, ValueError, TypeError, InvalidOperation):
             raise ValidationError({"recebimento": "Conta, valor ou forma de pagamento inválidos."})
@@ -320,7 +287,7 @@ class ContasPagarView(TenantAPIView):
             )
             valor = Decimal(str(request.data.get("valor")))
             meio = str(request.data.get("meio"))
-            if not valor.is_finite() or valor <= 0 or valor > conta.saldo or meio not in Transacao.Meio.values:
+            if not valor.is_finite() or valor <= 0 or valor > conta.saldo or meio not in ("DINHEIRO","PIX","CARTAO","OUTRO"):
                 raise ValueError
         except (ContaPagar.DoesNotExist, ValueError, TypeError, InvalidOperation):
             raise ValidationError({"pagamento": "Conta, valor ou forma de pagamento inválidos."})
@@ -716,3 +683,16 @@ class AutorizarDescontoView(TenantAPIView):
         obj = AprovacaoDesconto.objects.create(empresa=empresa, operador=request.user, aprovador=approver,
             chave_operacao=key, resumo_itens=fingerprint(request.data.get('itens', [])))
         return Response({'codigo': str(obj.codigo)}, status=201)
+
+
+class TerminalHeartbeatView(TenantAPIView):
+    def post(self,request):
+        from .models import TerminalPDV
+        empresa,membro=self.get_empresa(request)
+        name=str(request.data.get('identificador','')).strip()[:120]
+        try:
+            count=int(request.data.get('pendentes',0))
+            if not name or not 0<=count<=100000:raise ValueError
+        except (ValueError,TypeError):raise ValidationError('Terminal ou quantidade inválidos.')
+        TerminalPDV.objects.update_or_create(empresa=empresa,identificador=name,defaults={'operador':request.user,'pendentes':count,'erros':str(request.data.get('erros',''))[:2000]})
+        return Response({'ok':True})

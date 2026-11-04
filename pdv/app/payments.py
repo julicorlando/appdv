@@ -37,6 +37,10 @@ class PaymentDialog(QDialog):
         self.total = total
         self.payments = None
         self.credit = Decimal('0')
+        self.policy = None
+        self.policy_callback = None
+        self.manual_discount = Decimal('0')
+        self.policy_gross = total
         layout = QVBoxLayout(self)
         title = QLabel(f'Total da venda: R$ {total:.2f}')
         title.setStyleSheet('font-size:24px;font-weight:bold')
@@ -82,6 +86,8 @@ class PaymentDialog(QDialog):
         self.discount_button.setVisible(allowed)
         def update():
             gross, discount = callback()
+            self.manual_discount = discount
+            self.policy_gross = gross
             self.total = gross - discount
             self.title_label.setText(f'Total a pagar: R$ {self.total:.2f}')
             self.discount_summary.setText(f'Subtotal: R$ {gross:.2f} · Desconto: R$ {discount:.2f}')
@@ -94,10 +100,29 @@ class PaymentDialog(QDialog):
             gross = sum(((Decimal(str(i['produto']['preco_venda'])) * i['quantidade']).quantize(Decimal('.01')) for i in parent.cart.values()), Decimal('0'))
             self.discount_summary.setText(f'Subtotal: R$ {gross:.2f} · Desconto: R$ {gross - self.total:.2f}')
 
+    def configure_policy(self, policy, gross, manual, callback):
+        self.policy = policy
+        self.policy_gross = gross
+        self.manual_discount = manual
+        self.policy_callback = callback
+        self.update_summary()
+
     def update_summary(self):
         if not hasattr(self, 'summary'):
             return
         amounts = [(m, label, Decimal(str(widget.value()))) for m, label, widget in self.inputs]
+        if self.policy and self.policy_callback:
+            methods={m for m,_,v in amounts if v>0}
+            rate=Decimal('0')
+            if self.policy.get('modo') in ('AUTOMATICO','MISTO') and self.policy_gross>=Decimal(self.policy.get('minimo','0')):
+                if not self.policy.get('meio') or methods=={self.policy['meio']}:
+                    rate=Decimal(self.policy.get('percentual','0'))
+            auto=(self.policy_gross*rate/100).quantize(Decimal('.01'))
+            discount=max(auto,self.manual_discount)
+            self.total=self.policy_gross-discount
+            self.policy_callback(discount,auto)
+            self.title_label.setText(f'Total a pagar: R$ {self.total:.2f}')
+            self.discount_summary.setText(f'Subtotal: R$ {self.policy_gross:.2f} · Desconto: R$ {discount:.2f}')
         credit = Decimal(str(self.credit_input.value()))
         count = sum(value > 0 for _, _, value in amounts) + (credit > 0)
         received = sum((value for _, _, value in amounts), Decimal('0')) + credit

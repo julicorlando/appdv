@@ -5,6 +5,7 @@
 <link rel="stylesheet" href="{% static 'caixa_web.css' %}">
 <section class="web-pos" data-empresa="{{ loja.pk }}" data-caixa="{{ caixa.pk|default:'' }}" data-company="{{ loja.nome }}" data-system-logo="{% static 'brand/appdv-logo-web.png' %}" {% if loja.logo %}data-company-logo="{{ loja.logo.url }}"{% endif %}>
   {{ loja.dados_documento|json_script:"pos-company-details" }}
+  {{ loja.politica_pdv|json_script:"pos-discount-policy" }}
   {% csrf_token %}
   <header class="page-head"><div><p class="eyebrow">FRENTE DE CAIXA</p><h1>{{ loja.nome }}</h1><p>{{ request.user.get_username }}</p></div></header>
   <p id="pos-message" role="status" aria-live="polite"></p>
@@ -41,6 +42,8 @@
       {% for value, label in meios %}
       <label>{{ label }} <input type="number" name="{{ value }}" min="0" step="0.01" placeholder="0,00"></label>
       {% endfor %}
+      <label>Desconto manual<select id="pos-discount-mode"><option value="R$">R$</option><option value="%">%</option></select><input id="pos-discount" type="number" min="0" step="0.01" value="0"></label>
+      <p id="pos-discount-summary"></p><label>Gerente/admin para autorização<input id="pos-supervisor" autocomplete="off"></label><label>Senha de autorização<input id="pos-supervisor-password" type="password" autocomplete="off"></label>
       <button type="submit" class="primary">Confirmar venda</button>
       <button type="button" class="secondary" id="pos-cancel-pay">Voltar</button>
     </form>

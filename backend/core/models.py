@@ -32,6 +32,10 @@ class Empresa(models.Model):
     logo = models.ImageField(upload_to="empresas/logos/", blank=True)
     criada_em = models.DateTimeField(auto_now_add=True)
 
+    def politica_pdv(self):
+        policy=PoliticaDesconto.objects.filter(empresa=self).first()
+        return {"modo":policy.modo,"limite_caixa":str(policy.limite_caixa),"percentual":str(policy.percentual),"meio":policy.meio,"minimo":str(policy.minimo)} if policy else {"modo":"MANUAL","limite_caixa":"5","percentual":"0","meio":"","minimo":"0"}
+
     def dados_documento(self):
         campos = ("nome", "razao_social", "cnpj", "inscricao_estadual", "regime_tributario", "logradouro", "numero", "complemento", "bairro", "municipio", "codigo_municipio", "uf", "cep", "telefone", "email")
         return {campo: getattr(self, campo) for campo in campos}
@@ -170,6 +174,7 @@ class Venda(models.Model):
 
 
 class ItemVenda(models.Model):
+    custo_estoque_unitario = models.DecimalField(max_digits=14, decimal_places=4, null=True, blank=True)
     empresa = models.ForeignKey(Empresa, on_delete=models.CASCADE, related_name="itens_venda")
     venda = models.ForeignKey(Venda, on_delete=models.PROTECT, related_name="itens")
     produto = models.ForeignKey(Produto, on_delete=models.PROTECT)
@@ -189,6 +194,7 @@ class Transacao(models.Model):
         CARTAO = "CARTAO", "Cartão"
         PIX = "PIX", "PIX"
         OUTRO = "OUTRO", "Outro"
+        LOJA = "LOJA", "Crédito em loja"
     empresa = models.ForeignKey(Empresa, on_delete=models.CASCADE, related_name="transacoes")
     venda = models.ForeignKey(Venda, on_delete=models.PROTECT, related_name="transacoes")
     tipo = models.CharField(max_length=10, choices=Tipo.choices, default=Tipo.PAGAMENTO)
@@ -360,6 +366,7 @@ class Fornecedor(models.Model):
 
 
 class CompraEntrada(models.Model):
+    pedido_compra = models.ForeignKey("PedidoCompra", null=True, blank=True, on_delete=models.PROTECT, related_name="notas")
     """Nota de compra importada como rascunho; estoque só muda ao confirmar recebimento."""
     class Estado(models.TextChoices):
         RASCUNHO = "RASCUNHO", "Aguardando conferência"
@@ -525,3 +532,132 @@ class AprovacaoDesconto(models.Model):
     resumo_itens = models.CharField(max_length=64)
     criada_em = models.DateTimeField(auto_now_add=True)
     venda = models.OneToOneField(Venda, null=True, blank=True, on_delete=models.PROTECT)
+
+
+class EventoGestao(models.Model):
+    empresa = models.ForeignKey(Empresa, on_delete=models.CASCADE)
+    usuario = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL)
+    acao = models.CharField(max_length=80)
+    referencia = models.CharField(max_length=120)
+    detalhes = models.JSONField(default=dict)
+    criado_em = models.DateTimeField(auto_now_add=True)
+
+
+class Deposito(models.Model):
+    empresa = models.ForeignKey(Empresa, on_delete=models.CASCADE)
+    nome = models.CharField(max_length=100)
+    principal = models.BooleanField(default=False)
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=('empresa','nome'), name='uniq_deposito_nome'), models.UniqueConstraint(fields=('empresa',), condition=models.Q(principal=True), name='uniq_deposito_principal')]
+
+
+class SaldoDeposito(models.Model):
+    deposito = models.ForeignKey(Deposito, on_delete=models.PROTECT)
+    produto = models.ForeignKey(Produto, on_delete=models.PROTECT)
+    quantidade = models.DecimalField(max_digits=14, decimal_places=3, default=0, validators=[MinValueValidator(0)])
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=('deposito','produto'), name='uniq_saldo_deposito'), models.CheckConstraint(condition=models.Q(quantidade__gte=0), name='saldo_deposito_positivo')]
+
+
+class OrdemEntrega(models.Model):
+    empresa = models.ForeignKey(Empresa, on_delete=models.CASCADE)
+    orcamento = models.OneToOneField(Orcamento, on_delete=models.PROTECT, related_name='entrega')
+    venda = models.OneToOneField(Venda, null=True, blank=True, on_delete=models.PROTECT)
+    estado = models.CharField(max_length=20, default='AGUARDANDO', choices=[('AGUARDANDO','Aguardando separação'),('PRONTO','Pronto para retirada/entrega'),('EM_ROTA','Em rota'),('PARCIAL','Entregue parcialmente'),('ENTREGUE','Entregue'),('CANCELADO','Cancelado')])
+    endereco = models.CharField(max_length=250, blank=True)
+    prevista = models.DateField(null=True, blank=True)
+    responsavel = models.CharField(max_length=120, blank=True)
+    frete = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    criado_em = models.DateTimeField(auto_now_add=True)
+
+
+class ItemEntrega(models.Model):
+    ordem = models.ForeignKey(OrdemEntrega, on_delete=models.CASCADE, related_name='itens')
+    produto = models.ForeignKey(Produto, on_delete=models.PROTECT)
+    deposito = models.ForeignKey(Deposito, on_delete=models.PROTECT)
+    quantidade = models.DecimalField(max_digits=14, decimal_places=3)
+    fator = models.DecimalField(max_digits=12, decimal_places=6, default=1)
+    entregue = models.DecimalField(max_digits=14, decimal_places=3, default=0)
+    class Meta:
+        constraints = [models.CheckConstraint(condition=models.Q(entregue__gte=0, entregue__lte=models.F('quantidade')), name='entrega_limites')]
+
+
+class RegistroEntrega(models.Model):
+    item = models.ForeignKey(ItemEntrega, on_delete=models.PROTECT)
+    quantidade = models.DecimalField(max_digits=14, decimal_places=3)
+    recebido_por = models.CharField(max_length=180)
+    usuario = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    criado_em = models.DateTimeField(auto_now_add=True)
+
+
+class DevolucaoItem(models.Model):
+    empresa = models.ForeignKey(Empresa, on_delete=models.CASCADE)
+    item = models.ForeignKey(ItemVenda, on_delete=models.PROTECT, related_name='devolucoes')
+    chave = models.UUIDField(default=uuid.uuid4, unique=True)
+    quantidade = models.DecimalField(max_digits=14, decimal_places=3)
+    valor = models.DecimalField(max_digits=12, decimal_places=2)
+    destino = models.CharField(max_length=12, choices=[('ESTOQUE','Retornar ao estoque'),('PERDA','Sem retorno ao estoque')])
+    meio_estorno = models.CharField(max_length=10, default="OUTRO", choices=Transacao.Meio.choices)
+    financeiro = models.CharField(max_length=12, choices=[('CREDITO','Crédito ao cliente'),('ESTORNO','Estorno registrado'),('ABATIMENTO','Abater conta a receber')])
+    motivo = models.CharField(max_length=250)
+    usuario = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    criado_em = models.DateTimeField(auto_now_add=True)
+
+
+class CreditoLoja(models.Model):
+    empresa = models.ForeignKey(Empresa, on_delete=models.CASCADE)
+    cliente = models.ForeignKey(Cliente, on_delete=models.PROTECT)
+    devolucao = models.OneToOneField(DevolucaoItem, null=True, on_delete=models.PROTECT)
+    venda = models.ForeignKey(Venda, null=True, blank=True, on_delete=models.PROTECT)
+    valor = models.DecimalField(max_digits=12, decimal_places=2)
+    criado_em = models.DateTimeField(auto_now_add=True)
+
+
+class PedidoCompra(models.Model):
+    empresa = models.ForeignKey(Empresa, on_delete=models.CASCADE)
+    fornecedor = models.ForeignKey(Fornecedor, on_delete=models.PROTECT)
+    criado_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    estado = models.CharField(max_length=12, default='ABERTO', choices=[('ABERTO','Aberto'),('PARCIAL','Recebido parcialmente'),('RECEBIDO','Recebido'),('CANCELADO','Cancelado')])
+    criado_em = models.DateTimeField(auto_now_add=True)
+
+
+class ItemPedidoCompra(models.Model):
+    pedido = models.ForeignKey(PedidoCompra, on_delete=models.CASCADE, related_name='itens')
+    produto = models.ForeignKey(Produto, on_delete=models.PROTECT)
+    quantidade = models.DecimalField(max_digits=14, decimal_places=3)
+    recebido = models.DecimalField(max_digits=14, decimal_places=3, default=0)
+    custo = models.DecimalField(max_digits=14, decimal_places=4)
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=('pedido','produto'), name='uniq_pedido_compra_produto')]
+
+
+class PoliticaDesconto(models.Model):
+    empresa = models.OneToOneField(Empresa, on_delete=models.CASCADE)
+    modo = models.CharField(max_length=12, default='MANUAL', choices=[('MANUAL','Manual'),('AUTOMATICO','Automático'),('MISTO','Misto')])
+    limite_caixa = models.DecimalField(max_digits=5, decimal_places=2, default=5, validators=[MinValueValidator(0)])
+    percentual = models.DecimalField(max_digits=5, decimal_places=2, default=0, validators=[MinValueValidator(0)])
+    meio = models.CharField(max_length=10, blank=True, choices=[('','Qualquer pagamento'),('DINHEIRO','Dinheiro'),('PIX','Pix'),('CARTAO','Cartão')])
+    minimo = models.DecimalField(max_digits=12, decimal_places=2, default=0, validators=[MinValueValidator(0)])
+
+
+class TerminalPDV(models.Model):
+    empresa = models.ForeignKey(Empresa, on_delete=models.CASCADE)
+    operador = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    identificador = models.CharField(max_length=120)
+    pendentes = models.PositiveIntegerField(default=0)
+    erros = models.TextField(blank=True)
+    ultimo_contato = models.DateTimeField(auto_now=True)
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=('empresa','identificador'), name='uniq_terminal_empresa')]
+
+
+class DocumentoFiscal(models.Model):
+    empresa = models.ForeignKey(Empresa, on_delete=models.CASCADE)
+    venda = models.OneToOneField(Venda, on_delete=models.PROTECT)
+    estado = models.CharField(max_length=16, default='CONFIGURAR', choices=[('CONFIGURAR','Configuração pendente'),('PENDENTE','Aguardando integração'),('AUTORIZADO','Autorizado'),('REJEITADO','Rejeitado'),('CANCELADO','Cancelado')])
+    chave = models.CharField(max_length=44, blank=True)
+    protocolo = models.CharField(max_length=80, blank=True)
+    mensagem = models.TextField(blank=True)
+    xml = models.FileField(upload_to='fiscal/xml/', blank=True)
+    danfe = models.FileField(upload_to='fiscal/danfe/', blank=True)
+    atualizado_em = models.DateTimeField(auto_now=True)

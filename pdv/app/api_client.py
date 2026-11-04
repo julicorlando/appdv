@@ -159,3 +159,7 @@ class ArmazemAPI:
     def autorizar_desconto(self, chave, itens, usuario, senha):
         return self._request('POST', '/api/v1/descontos/autorizar/', json={
             'chave': chave, 'itens': itens, 'usuario': usuario, 'senha': senha}).json()['codigo']
+
+    def heartbeat(self, pendentes, erros=''):
+        import socket
+        return self._request('POST','/api/v1/terminais/heartbeat/',json={'identificador':socket.gethostname() + ':' + self.username,'pendentes':pendentes,'erros':erros}).json()

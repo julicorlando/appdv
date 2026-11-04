@@ -147,6 +147,13 @@ def registrar_venda(*, empresa, usuario, dados, frete=Decimal("0.00")):
         soma_pagamentos += valor
     if (soma_pagamentos + credito).quantize(Decimal("0.01")) != total:
         raise ValidationError({"pagamentos": "Pagamentos e crédito precisam corresponder ao total da venda."})
+    credito_loja=sum((valor for meio,valor,_,_,_ in valores_pagamento if meio=='LOJA'),Decimal('0'))
+    if credito_loja:
+        from .models import CreditoLoja
+        if not cliente:raise ValidationError({'cliente':'Identifique o cliente para usar crédito em loja.'})
+        Cliente.objects.select_for_update().get(pk=cliente.pk,empresa=empresa)
+        saldo=CreditoLoja.objects.filter(empresa=empresa,cliente=cliente).aggregate(n=Sum('valor'))['n'] or Decimal('0')
+        if credito_loja>saldo:raise ValidationError({'credito_loja':'Saldo de crédito em loja insuficiente.'})
     if credito > 0:
         saldo_aberto = ContaReceber.objects.filter(
             empresa=empresa, cliente=cliente,
@@ -173,10 +180,13 @@ def registrar_venda(*, empresa, usuario, dados, frete=Decimal("0.00")):
     for produto, quantidade, desconto, total_linha, fator in itens_calculados:
         ItemVenda.objects.create(
             empresa=empresa, venda=venda, produto=produto, quantidade=quantidade,
+            custo_estoque_unitario=produto.custo_medio,
             preco_unitario=produto.preco_venda, desconto=desconto, fator_conversao=fator, total=total_linha,
         )
     for produto_id, quantidade_total in estoque_solicitado.items():
         produto = produtos_travados[produto_id]
+        from .management_services import consumir_locais
+        consumir_locais(produto, quantidade_total, dados.get('depositos_reserva',{}).get(str(produto.pk)))
         produto.estoque_atual -= quantidade_total
         produto.save(update_fields=("estoque_atual", "atualizado_em"))
         MovimentacaoEstoque.objects.create(
@@ -195,6 +205,8 @@ def registrar_venda(*, empresa, usuario, dados, frete=Decimal("0.00")):
             valor_original=credito, saldo=credito, vencimento=vencimento,
             criado_por=usuario,
         )
+    if credito_loja:
+        CreditoLoja.objects.create(empresa=empresa,cliente=cliente,venda=venda,valor=-credito_loja)
     if aprovacao:
         aprovacao.venda = venda
         aprovacao.save(update_fields=['venda'])
@@ -220,6 +232,16 @@ def cancelar_venda(*, empresa, usuario, venda_id, codigo,
     if not token.esta_valido():
         raise ValidationError({"token": "Token expirado, revogado ou já utilizado."})
 
+    from .models import DevolucaoItem, OrdemEntrega
+    if DevolucaoItem.objects.filter(empresa=empresa,item__venda=venda).exists():
+        raise ValidationError('Venda com devolução parcial: trate os itens restantes pela central de devoluções.')
+    if OrdemEntrega.objects.filter(empresa=empresa,venda=venda,itens__entregue__gt=0).exists():
+        raise ValidationError('Venda com entrega registrada: utilize devolução por item.')
+    OrdemEntrega.objects.filter(empresa=empresa,venda=venda).update(estado='CANCELADO')
+    from .models import CreditoLoja
+    for debit in CreditoLoja.objects.filter(empresa=empresa,venda=venda,valor__lt=0):
+        Cliente.objects.select_for_update().get(pk=debit.cliente_id)
+        CreditoLoja.objects.create(empresa=empresa,cliente=debit.cliente,venda=venda,valor=-debit.valor)
     token.usado_em = timezone.now()
     token.usado_por = usuario
     token.save(update_fields=("usado_em", "usado_por"))
