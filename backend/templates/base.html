@@ -11,8 +11,9 @@
 {% if user.is_authenticated %}<div class="top-actions"><span>{{ user.get_username }}</span><a class="ghost" href="{% url 'minha-senha' %}">Minha senha</a><form method="post" action="{% url 'logout' %}">{% csrf_token %}<button class="ghost" type="submit">Sair</button></form></div>{% endif %}
 </header>
 {% if user.is_authenticated and user.is_superuser %}
-<nav class="global-nav master-nav" aria-label="Navegação principal"><a class="nav-home" href="{% url 'master' %}"{% if request.resolver_match.url_name == "master" %} aria-current="page"{% endif %}>Painel Master</a></nav>
-{% elif user.is_authenticated and empresa and membro %}
+<nav class="global-nav master-nav" aria-label="Navegação do Master"><a class="nav-home" href="{% url 'master' %}"{% if request.resolver_match.url_name == "master" %} aria-current="page"{% endif %}>Painel Master</a><a href="{% url 'master-cobranca' %}"{% if request.resolver_match.url_name == "master-cobranca" %} aria-current="page"{% endif %}>Cobrança e planos</a>{% if master_na_empresa %}<form method="post" action="{% url 'master-sair-empresa' %}" style="display:inline">{% csrf_token %}<button class="ghost" type="submit">Sair da empresa</button></form>{% endif %}</nav>
+{% endif %}
+{% if user.is_authenticated and empresa and membro and not master_view %}
 <nav class="global-nav" aria-label="Navegação principal da empresa">
 <div class="nav-tenant"><span class="nav-tenant-label">{{ membro.get_papel_display|upper }}</span><a href="{% url 'empresa-dashboard' empresa.id %}"{% if request.resolver_match.url_name == "empresa-dashboard" %} aria-current="page"{% endif %}>{{ empresa.nome }}</a></div>
 <div class="nav-groups">
@@ -34,7 +35,7 @@
 <a href="{% url 'empresa-contas-receber' empresa.id %}"{% if request.resolver_match.url_name == "empresa-contas-receber" %} aria-current="page"{% endif %}>Contas a receber</a>
 <a href="{% url 'empresa-contas-pagar' empresa.id %}"{% if request.resolver_match.url_name == "empresa-contas-pagar" %} aria-current="page"{% endif %}>Contas a pagar</a>
 </div></details>
-<details class="nav-group" {% if request.resolver_match.url_name == "empresa-configuracao" or request.resolver_match.url_name == "empresa-autorizacao" %}open{% endif %}><summary>Administração</summary><div class="nav-menu"><a href="{% url 'gestao-sincronizacao' empresa.id %}">Sincronização dos caixas</a><a href="{% url 'gestao-fiscal' empresa.id %}">Central fiscal</a>{% if membro.papel == 'ADMIN' %}<a href="{% url 'gestao-equipe' empresa.id %}">Equipe e permissões</a><a href="{% url 'gestao-descontos' empresa.id %}">Políticas de desconto</a>{% endif %}
+<details class="nav-group" {% if request.resolver_match.url_name == "empresa-configuracao" or request.resolver_match.url_name == "empresa-autorizacao" %}open{% endif %}><summary>Administração</summary><div class="nav-menu"><a href="{% url 'gestao-sincronizacao' empresa.id %}">Sincronização dos caixas</a>{% if membro.papel != 'CAIXA' %}<a href="{% url 'empresa-assinatura' empresa.id %}"{% if request.resolver_match.url_name == "empresa-assinatura" %} aria-current="page"{% endif %}>Assinatura do ApPdv</a>{% endif %}<a href="{% url 'gestao-fiscal' empresa.id %}">Central fiscal</a>{% if membro.papel == 'ADMIN' %}<a href="{% url 'gestao-equipe' empresa.id %}">Equipe e permissões</a><a href="{% url 'gestao-descontos' empresa.id %}">Políticas de desconto</a>{% endif %}
 <a href="{% url 'empresa-configuracao' empresa.id %}"{% if request.resolver_match.url_name == "empresa-configuracao" %} aria-current="page"{% endif %}>Empresa e dados fiscais</a>
 <a href="{% url 'empresa-autorizacao' empresa.id %}"{% if request.resolver_match.url_name == "empresa-autorizacao" %} aria-current="page"{% endif %}>Autorizações</a>
 </div></details>
@@ -43,6 +44,8 @@
 </nav>
 {% endif %}
 <main class="wrap">
+{% if master_na_empresa and empresa and not master_view %}<section class="messages"><div class="message info">Você está no painel de <b>{{ empresa.nome }}</b> como Master (acesso total, registrado na auditoria).</div></section>{% endif %}
+{% if aviso_cobranca and request.resolver_match.url_name != "empresa-assinatura" %}<section class="messages"><div class="message {% if aviso_cobranca.nivel == 'erro' %}error{% else %}info{% endif %}">{{ aviso_cobranca.texto }} {% if empresa and membro.papel != 'CAIXA' %}<a href="{% url 'empresa-assinatura' empresa.id %}">Ver assinatura e pagar</a>{% endif %}</div></section>{% endif %}
 {% if messages %}<section class="messages">{% for message in messages %}<div class="message {{ message.tags }}">{{ message }}</div>{% endfor %}</section>{% endif %}
 {% block content %}{% endblock %}
 </main>
