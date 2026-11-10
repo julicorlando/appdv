@@ -5,6 +5,7 @@ from io import BytesIO
 from decimal import Decimal, InvalidOperation
 from django.contrib import messages
 from django.contrib.auth import get_user_model
+from django.contrib.auth import views as auth_views
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.db import transaction
@@ -118,6 +119,9 @@ def master_adicionar_membro(request, empresa_id):
 def require_membership(request, empresa_id, papeis=None):
     if not request.user.is_authenticated:
         raise PermissionDenied("Faça login.")
+    from .access import conta_ativa
+    if not conta_ativa(request.user):
+        raise PermissionDenied("Conta desativada.")
     try:
         membro = MembroEmpresa.objects.select_related("empresa").get(
             empresa_id=empresa_id, usuario=request.user, ativo=True,
@@ -739,16 +743,21 @@ def empresa_contas_receber(request, empresa_id):
                 meio = request.POST.get("meio")
                 if not valor.is_finite() or valor <= 0 or valor > conta.saldo or meio not in ("DINHEIRO", "PIX", "CARTAO", "OUTRO"):
                     raise ValueError("Valor ou forma de pagamento inválidos.")
+                from .access import caixa_para_movimento
+                caixa = caixa_para_movimento(
+                    membro.empresa, request.user, [meio], operacao="receber em dinheiro",
+                )
                 RecebimentoConta.objects.create(
                     conta=conta, empresa=membro.empresa, operador=request.user,
-                    meio=meio, valor=valor,
+                    meio=meio, valor=valor, caixa=caixa,
                 )
                 conta.saldo -= valor
                 conta.estado = ContaReceber.Estado.QUITADA if conta.saldo == 0 else ContaReceber.Estado.PARCIAL
                 conta.save(update_fields=("saldo", "estado"))
             messages.success(request, "Recebimento registrado.")
         except Exception as exc:
-            messages.error(request, f"Não foi possível registrar: {exc}")
+            from .access import mensagem_erro
+            messages.error(request, f"Não foi possível registrar: {mensagem_erro(exc)}")
         return redirect("empresa-contas-receber", empresa_id=empresa_id)
     contas = ContaReceber.objects.filter(
         empresa=membro.empresa, estado__in=(ContaReceber.Estado.ABERTA, ContaReceber.Estado.PARCIAL)
@@ -790,3 +799,57 @@ def empresa_contas_pagar(request, empresa_id):
     return render(request, "empresa_contas_pagar.html", {
         "empresa": membro.empresa, "membro": membro, "contas": contas,
     })
+
+
+def logo_empresa(request, path):
+    """Serve somente os logos enviados pelas empresas.
+
+    O restante de MEDIA_ROOT (XML e DANFE fiscais) continua sem acesso público.
+    """
+    from django.conf import settings
+    from django.views.static import serve
+    if request.method not in ("GET", "HEAD"):
+        return HttpResponseNotAllowed(["GET", "HEAD"])
+    response = serve(request, path, document_root=settings.MEDIA_ROOT / "empresas" / "logos")
+    response["Cache-Control"] = "public, max-age=3600"
+    response["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+class LoginWebView(auth_views.LoginView):
+    """Login do painel com o mesmo limite de tentativas do login da API."""
+    template_name = "login.html"
+    limite = 10
+    janela = 60
+
+    def _chaves(self):
+        from rest_framework.settings import api_settings
+        usuario = str(self.request.POST.get("username", "")).strip().lower()[:150]
+        ip = self.request.META.get("REMOTE_ADDR", "")
+        encaminhado = self.request.META.get("HTTP_X_FORWARDED_FOR", "")
+        proxies = api_settings.NUM_PROXIES
+        if encaminhado and proxies:
+            enderecos = [a.strip() for a in encaminhado.split(",") if a.strip()]
+            if enderecos:
+                ip = enderecos[-min(proxies, len(enderecos))]
+        return [f"login-web:u:{usuario}", f"login-web:ip:{ip}"]
+
+    def post(self, request, *args, **kwargs):
+        from django.core.cache import cache
+        chaves = self._chaves()
+        if any((cache.get(chave) or 0) >= self.limite * (3 if ":ip:" in chave else 1) for chave in chaves):
+            from django.forms.utils import ErrorDict
+            form = self.get_form()
+            # Não valida o formulário: com o bloqueio ativo a senha nem é conferida.
+            form._errors, form.cleaned_data = ErrorDict(), {}
+            form.add_error(None, "Muitas tentativas de login. Aguarde um minuto e tente novamente.")
+            return self.render_to_response(self.get_context_data(form=form))
+        return super().post(request, *args, **kwargs)
+
+    def form_invalid(self, form):
+        from django.core.cache import cache
+        if self.request.method == "POST":
+            for chave in self._chaves():
+                # Janela deslizante: cada falha renova o prazo de um minuto.
+                cache.set(chave, (cache.get(chave) or 0) + 1, self.janela)
+        return super().form_invalid(form)
