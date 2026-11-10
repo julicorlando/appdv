@@ -1,6 +1,6 @@
 """ApPdv — PDV instalado (Windows)."""
 
-VERSION = "0.3.1"
+VERSION = "0.3.2"
 
 
 def parse_version(value):

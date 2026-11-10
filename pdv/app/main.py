@@ -11,8 +11,8 @@ import uuid
 from decimal import Decimal
 from pathlib import Path
 
-from PySide6.QtGui import QDesktopServices, QIcon, QPixmap
-from PySide6.QtCore import QUrl, QTimer, Qt, QSettings, QThread, Signal
+from PySide6.QtGui import QDesktopServices, QIcon, QKeySequence, QPixmap, QShortcut
+from PySide6.QtCore import QEventLoop, QUrl, QTimer, Qt, QSettings, QThread, Signal
 import requests
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout,
@@ -41,9 +41,21 @@ class LoginDialog(QDialog):
         self.setWindowTitle("Conectar ao ApPdv")
         self.setWindowIcon(QIcon(asset_path("appdv-icon-256.png")))
         self.api = None
-        self.setMinimumWidth(440)
         self.settings = QSettings("ApPdv", "PDV")
-        layout = QVBoxLayout(self)
+        # Em tela cheia o formulário fica centralizado num cartão de largura fixa.
+        outer = QVBoxLayout(self)
+        outer.addStretch(1)
+        row = QHBoxLayout()
+        outer.addLayout(row)
+        outer.addStretch(1)
+        card = QWidget()
+        card.setObjectName("loginCard")
+        card.setMinimumWidth(440)
+        card.setMaximumWidth(520)
+        row.addStretch(1)
+        row.addWidget(card)
+        row.addStretch(1)
+        layout = QVBoxLayout(card)
         layout.setContentsMargins(28, 24, 28, 24)
         logo = QLabel()
         logo.setPixmap(QPixmap(asset_path("appdv-logo-web.png")).scaled(
@@ -323,8 +335,11 @@ def _cash_from_ref(ref):
 
 
 class PDVWindow(QMainWindow):
+    closed = Signal()
+
     def __init__(self, api):
         super().__init__()
+        self.logout_requested = False
         self.api = api
         self.store = LocalStore()
         self.products = []
@@ -427,7 +442,13 @@ class PDVWindow(QMainWindow):
         self.connection_label.setObjectName("connection")
         self.connection_label.setToolTip("Sincronização automática a cada 10 segundos.")
         header.addWidget(self.connection_label)
+        self.logout_button = QPushButton("Sair")
+        self.logout_button.setToolTip("Encerra a sessão deste operador e volta para a tela de login.")
+        self.logout_button.clicked.connect(self._logout)
+        header.addWidget(self.logout_button)
         layout.addLayout(header)
+        # F11 alterna a tela cheia (útil para acessar outras janelas do Windows).
+        QShortcut(QKeySequence(Qt.Key.Key_F11), self, activated=self._toggle_fullscreen)
 
         self.product_banner = QLabel("Leia um código de barras ou pesquise um produto")
         self.product_banner.setObjectName("productName")
@@ -1864,12 +1885,37 @@ button {{ width:100%; padding:10px; margin:12px 0; }}
         self.sync_worker.finished.connect(lambda: self._update_connection_label())
         self.sync_worker.start()
 
+    def _toggle_fullscreen(self):
+        self.showNormal() if self.isFullScreen() else self.showFullScreen()
+
+    def _logout(self):
+        aviso = "Sair e voltar para a tela de login?"
+        if self.cash_id:
+            aviso += ("\n\nO caixa continua aberto e será retomado quando este operador entrar de novo. "
+                      "Para encerrar o dia, use Fechar caixa antes de sair.")
+        if self.checkout_payload:
+            aviso += "\n\nHá uma venda aguardando confirmação; ela fica guardada para o próximo login."
+        if QMessageBox.question(self, "Sair", aviso) != QMessageBox.StandardButton.Yes:
+            return
+        self.logout_requested = True
+        self.sync_timer.stop()
+        if self.sync_worker and self.sync_worker.isRunning():
+            self.status.setText("Terminando a sincronização antes de sair…")
+            self.sync_worker.wait(15000)
+        self.api.session.headers.pop("Authorization", None)
+        self.api.refresh_token = None
+        self.close()
+
     def closeEvent(self, event):
         if self.sync_worker and self.sync_worker.isRunning():
-            QMessageBox.information(self, 'Sincronização', 'Aguarde a tentativa de sincronização terminar antes de sair.')
-            event.ignore()
-            return
+            if getattr(self, 'logout_requested', False):
+                self.sync_worker.wait(15000)
+            else:
+                QMessageBox.information(self, 'Sincronização', 'Aguarde a tentativa de sincronização terminar antes de sair.')
+                event.ignore()
+                return
         super().closeEvent(event)
+        self.closed.emit()
 
 
 def main():
@@ -1877,13 +1923,22 @@ def main():
     app = QApplication(sys.argv)
     app.setWindowIcon(QIcon(asset_path("appdv-icon-256.png")))
     app.setQuitOnLastWindowClosed(False)
-    login = LoginDialog()
-    if login.exec() != QDialog.DialogCode.Accepted:
-        return
-    window = PDVWindow(login.api)
-    window.show()
-    app.setQuitOnLastWindowClosed(True)
-    sys.exit(app.exec())
+    # Tela cheia automática; "Sair" no caixa volta para o login, "Sair" no login fecha o ApPdv.
+    while True:
+        login = LoginDialog()
+        login.setWindowState(Qt.WindowState.WindowFullScreen)
+        if login.exec() != QDialog.DialogCode.Accepted:
+            break
+        window = PDVWindow(login.api)
+        session = QEventLoop()
+        window.closed.connect(session.quit)
+        window.showFullScreen()
+        session.exec()
+        logout = window.logout_requested
+        window.deleteLater()
+        if not logout:
+            break
+    app.quit()
 
 
 if __name__ == "__main__":
