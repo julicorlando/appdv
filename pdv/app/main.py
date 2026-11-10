@@ -115,8 +115,19 @@ class LoginDialog(QDialog):
             self.error.setText("Resposta de autenticação inválida. Confira o servidor.")
 
 
+def is_permanent_rejection(exc):
+    """4xx de regra de negócio (preço, estoque, caixa…): reenviar igual não resolve.
+
+    401/403/408/429 são tratados como temporários (sessão, permissão ou limite).
+    """
+    response = getattr(exc, 'response', None)
+    code = getattr(response, 'status_code', None)
+    return code is not None and 400 <= code < 500 and code not in (401, 403, 408, 429)
+
+
 class PendingSyncWorker(QThread):
     result = Signal(str, str, object)
+    rejected = Signal(str, str)
 
     def __init__(self, api, rows, parent=None):
         super().__init__(parent)
@@ -142,6 +153,12 @@ class PendingSyncWorker(QThread):
             except (requests.ConnectionError, requests.Timeout):
                 self.result.emit(key, 'Sem conexão; nova tentativa automática.', None)
                 return
+            except requests.HTTPError as exc:
+                errors.append(f'{key[:8]}: {exc}')
+                if is_permanent_rejection(exc):
+                    self.rejected.emit(key, str(exc))
+                else:
+                    self.result.emit(key, str(exc), None)
             except Exception as exc:
                 errors.append(f'{key[:8]}: {exc}')
                 self.result.emit(key, str(exc), None)
@@ -1306,7 +1323,11 @@ button {{ width:100%; padding:10px; margin:12px 0; }}
 
     def _close_cash(self):
         if self.store.pending_errors(self.tenant_id, self.api.username):
-            QMessageBox.warning(self, "Sincronização pendente", "Sincronize ou revise as vendas pendentes antes de fechar o caixa.")
+            QMessageBox.warning(
+                self, "Sincronização pendente",
+                "Há vendas locais deste operador ainda não registradas no servidor. "
+                "Abra Sincronização para reenviar ou, se o servidor recusou, descartar com autorização do gerente.",
+            )
             return
         if self.checkout_payload:
             QMessageBox.warning(self, "Venda pendente", "Confirme a venda pendente antes de fechar o caixa.")
@@ -1347,8 +1368,12 @@ button {{ width:100%; padding:10px; margin:12px 0; }}
             QMessageBox.critical(self, "Falha ao fechar caixa", str(exc))
 
     def _show_pending(self):
-        rows = self.store.pending_errors(self.tenant_id, self.api.username)
-        QMessageBox.information(self, 'Sincronização', '\n'.join(f'{key[:8]} · {error or "aguardando envio"}' for key, error in rows) or 'Nenhuma venda pendente deste operador.')
+        from app.pending import PendingSalesDialog
+        if self.sync_worker and self.sync_worker.isRunning():
+            QMessageBox.information(self, 'Sincronização', 'Aguarde a tentativa de sincronização em andamento terminar.')
+            return
+        dialog = PendingSalesDialog(self.api, self.store, self.tenant_id, self.api.username, self)
+        dialog.exec()
         self._sync_pending()
 
     def _update_company_logo(self):
@@ -1413,7 +1438,12 @@ button {{ width:100%; padding:10px; margin:12px 0; }}
                 if self.tenant_id == tenant:
                     self.online = True
                     self.status.setText(f"Venda sincronizada #{response['id']}")
+        def rejected(key, error):
+            self.store.set_rejected(key, error)
+            if self.tenant_id == tenant:
+                self.status.setText('Venda pendente recusada pelo servidor · revise em Sincronização')
         self.sync_worker.result.connect(result)
+        self.sync_worker.rejected.connect(rejected)
         self.sync_worker.start()
 
     def closeEvent(self, event):
