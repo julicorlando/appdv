@@ -162,7 +162,9 @@ def devolver(empresa, usuario, item_id, raw, destino, financeiro, motivo, chave,
         account.save(update_fields=['saldo','estado'])
     if financeiro=='ESTORNO':
         if meio not in ('DINHEIRO','PIX','CARTAO','OUTRO'):raise ValidationError('Meio de estorno inválido.')
-        Transacao.objects.create(empresa=empresa,venda=item.venda,tipo='ESTORNO',meio=meio,valor=amount,referencia_externa=f'Devolução #{result.pk} — estorno manual')
+        from .access import caixa_para_movimento
+        caixa = caixa_para_movimento(empresa, usuario, [meio], operacao='devolver dinheiro ao cliente')
+        Transacao.objects.create(empresa=empresa,venda=item.venda,caixa=caixa,tipo='ESTORNO',meio=meio,valor=amount,referencia_externa=f'Devolução #{result.pk} — estorno manual')
     if destino == 'ESTOQUE':
         product = Produto.objects.select_for_update().get(pk=item.produto_id,empresa=empresa)
         stock = (q * item.fator_conversao).quantize(Decimal('.001'))
