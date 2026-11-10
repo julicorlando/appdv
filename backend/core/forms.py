@@ -90,9 +90,31 @@ class CategoriaSimpleForm(forms.ModelForm):
 class EmpresaLogoForm(forms.ModelForm):
     class Meta:
         model = Empresa
-        fields = ("nome", "razao_social", "cnpj", "inscricao_estadual", "regime_tributario", "logradouro", "numero", "complemento", "bairro", "municipio", "codigo_municipio", "uf", "cep", "telefone", "email", "ambiente_fiscal", "provedor_fiscal", "logo", "frete_padrao")
+        fields = ("nome", "razao_social", "cnpj", "inscricao_estadual", "regime_tributario", "logradouro", "numero", "complemento", "bairro", "municipio", "codigo_municipio", "uf", "cep", "telefone", "email", "ambiente_fiscal", "provedor_fiscal", "logo", "frete_padrao",
+                  "pis_cofins_cst", "nfce_automatica", "focus_token", "mp_access_token")
         labels = {"frete_padrao": "Frete padrão para entrega (R$)"}
-        widgets = {"logo": forms.ClearableFileInput(attrs={"accept": "image/png,image/jpeg,image/webp"})}
+        widgets = {
+            "logo": forms.ClearableFileInput(attrs={"accept": "image/png,image/jpeg,image/webp"}),
+            "focus_token": forms.PasswordInput(render_value=False, attrs={"autocomplete": "off"}),
+            "mp_access_token": forms.PasswordInput(render_value=False, attrs={"autocomplete": "off"}),
+        }
+        help_texts = {
+            "focus_token": "Token da empresa no painel da Focus NFe. Deixe em branco para manter o atual; digite REMOVER para apagar.",
+            "mp_access_token": "Access token de produção do Mercado Pago. Deixe em branco para manter o atual; digite REMOVER para apagar.",
+            "provedor_fiscal": "Emissão integrada: Focus NFe.",
+        }
+
+    def _token(self, campo):
+        valor = (self.cleaned_data.get(campo) or "").strip()
+        if valor.upper() == "REMOVER":
+            return ""
+        return valor or getattr(self.instance, campo, "")
+
+    def clean_focus_token(self):
+        return self._token("focus_token")
+
+    def clean_mp_access_token(self):
+        return self._token("mp_access_token")
 
     def clean_cnpj(self):
         valor = self.cleaned_data["cnpj"]
