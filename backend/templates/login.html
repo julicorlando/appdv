@@ -1,4 +1,5 @@
 {% extends "base.html" %}{% block title %}Entrar · Armazém PDV{% endblock %}
 {% block content %}<section class="login-card"><p class="eyebrow">GESTÃO DO ARMAZÉM</p><h1>Acesse sua conta</h1>
 <form method="post">{% csrf_token %}{{ form.as_p }}{% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}<button class="primary full" type="submit">Entrar</button></form>
+<p><a href="{% url 'redefinir-senha' %}">Esqueci minha senha</a></p>
 </section>{% endblock %}
