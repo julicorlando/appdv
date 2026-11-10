@@ -1,0 +1,4 @@
+{% extends "base.html" %}{% block title %}Esqueci minha senha{% endblock %}
+{% block content %}
+<section class="panel" style="max-width:520px"><h1>Esqueci minha senha</h1><p>Informe o e-mail cadastrado. Se ele existir, enviaremos um link para criar uma nova senha.</p><form method="post">{% csrf_token %}{{ form.as_p }}<button class="primary">Enviar link</button></form><a href="{% url 'login' %}">Voltar ao login</a></section>
+{% endblock %}
