@@ -1,9 +1,11 @@
 ; A versão vem de pdv/app/__init__.py (build_windows.bat e o GitHub Actions passam /DAppVer=...).
 #ifndef AppVer
-  #define AppVer "0.3.2"
+  #define AppVer "0.3.3"
 #endif
 
 [Setup]
+; Atualização pelo próprio PDV: fecha o ApPdv em execução antes de substituir os arquivos.
+CloseApplications=yes
 AppId={{A39E523E-6B90-4753-B524-7BF47E0BAF57}
 AppName=ApPdv
 AppVersion={#AppVer}
@@ -28,7 +30,7 @@ Name: "{group}\ApPdv"; Filename: "{app}\ApPdv.exe"
 Name: "{autodesktop}\ApPdv"; Filename: "{app}\ApPdv.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\ApPdv.exe"; Description: "Abrir o ApPdv"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\ApPdv.exe"; Description: "Abrir o ApPdv"; Flags: nowait postinstall
 
 [Tasks]
 Name: "desktopicon"; Description: "Criar atalho na área de trabalho"; GroupDescription: "Atalhos:"
