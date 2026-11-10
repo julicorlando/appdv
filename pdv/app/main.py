@@ -6,6 +6,7 @@ import re
 from datetime import datetime
 import socket
 import sys
+import time
 import uuid
 from decimal import Decimal
 from pathlib import Path
@@ -22,6 +23,7 @@ from PySide6.QtWidgets import (
 from app import VERSION, parse_version
 from app.api_client import ArmazemAPI
 from app.local_store import LocalStore
+from app import offline_auth
 from app.payments import PaymentDialog
 from app.quotes import quote_html
 from app.discounts import distribute_discount
@@ -98,11 +100,14 @@ class LoginDialog(QDialog):
         if url.scheme() != "https" or not url.host() or url.userInfo():
             self.error.setText("Informe um endereço HTTPS válido para o servidor.")
             return
+        server, username, password = self.url.text().strip(), self.username.text().strip(), self.password.text()
         try:
-            self.api = ArmazemAPI(self.url.text().strip())
-            self.api.login(self.username.text().strip(), self.password.text())
-            self.api.username = self.username.text().strip()
-            self.settings.setValue("server", self.url.text().strip())
+            self.api = ArmazemAPI(server)
+            tokens = self.api.login(username, password)
+            self.api.username = username
+            self.api.offline_login = False
+            self._save_offline_access(server, username, password, tokens.get("refresh", ""))
+            self.settings.setValue("server", server)
             self.settings.setValue("username", self.api.username if self.remember.isChecked() else "")
             self.password.clear()
             self.accept()
@@ -110,10 +115,41 @@ class LoginDialog(QDialog):
             self.error.setText("Usuário ou senha inválidos." if exc.response is not None and
                                exc.response.status_code in (400, 401, 403) else
                                "O servidor não conseguiu concluir o acesso. Tente novamente.")
+        except (requests.ConnectionError, requests.Timeout):
+            self._offline_login(server, username, password)
         except requests.RequestException:
             self.error.setText("Não foi possível conectar. Confira a internet e o servidor.")
         except (ValueError, KeyError):
             self.error.setText("Resposta de autenticação inválida. Confira o servidor.")
+
+    def _save_offline_access(self, server, username, password, refresh):
+        try:
+            LocalStore().save_offline_login(server, username, offline_auth.criar_registro(password, refresh))
+        except Exception:
+            pass  # o login online continua valendo mesmo se o disco local falhar
+
+    def _offline_login(self, server, username, password):
+        """Sem internet: entra com a verificação guardada no último login online (até 30 dias)."""
+        try:
+            record = LocalStore().offline_login(server, username)
+        except Exception:
+            record = None
+        ok, reason = offline_auth.conferir(record, password)
+        if not ok:
+            self.api = None
+            self.error.setText("Sem conexão com o servidor. " + reason)
+            return
+        self.api = ArmazemAPI(server)
+        self.api.username = username
+        self.api.refresh_token = record.get("refresh") or None
+        self.api.offline_login = True
+        self.api.cached_companies = record.get("companies") or []
+        self.password.clear()
+        until = datetime.fromtimestamp(float(record["valid_until"])).strftime("%d/%m/%Y")
+        QMessageBox.information(self, "Modo offline",
+                                f"Sem internet: entrando com o acesso offline (válido até {until}).\n"
+                                "As vendas ficam guardadas neste computador e sobem sozinhas quando a conexão voltar.")
+        self.accept()
 
 
 def is_permanent_rejection(exc):
@@ -130,30 +166,125 @@ class PendingSyncWorker(QThread):
     result = Signal(str, str, object)
     rejected = Signal(str, str)
 
-    def __init__(self, api, rows, parent=None):
+    cash_mapped = Signal(str, int)
+    cash_op_done = Signal(str, str)
+    catalog_changed = Signal()
+    connection = Signal(bool, str)
+    auth_updated = Signal(str, str)
+
+    def __init__(self, api, rows, parent=None, store=None, tenant_id=None, operator=None):
         super().__init__(parent)
         self.rows = rows
+        self.store = store
+        self.tenant_id = tenant_id
+        self.operator = operator
         self.client = ArmazemAPI(api.base_url, empresa_id=api.empresa_id, timeout=4)
         self.client.session.headers.update(api.session.headers)
         self.client.refresh_token = api.refresh_token
         self.client.username = api.username
 
+    def _queue(self):
+        """Vendas e operações de caixa na ordem em que aconteceram."""
+        itens = [('venda', key, raw, ordem) for ordem, (key, raw) in enumerate(self.rows)]
+        if self.store is None:
+            return itens
+        ordem_vendas = {}
+        with self.store.connect() as db:
+            for key, ordem in db.execute("SELECT idempotency_key, ordem FROM pending_sales"):
+                ordem_vendas[key] = ordem
+        itens = [('venda', key, raw, ordem_vendas.get(key, 0)) for key, raw in self.rows]
+        for op in self.store.pending_cash_ops(self.tenant_id, self.operator):
+            if op['status'] == 'PENDENTE':
+                itens.append(('caixa', op['chave'], op, op['ordem']))
+        return sorted(itens, key=lambda item: item[3])
+
+    def _resolve_cash(self, payload):
+        local = payload.get('caixa_local')
+        if not local:
+            return payload.get('caixa')
+        server_id = self.store.resolve_cash(self.tenant_id, local) if self.store else None
+        if server_id is None:
+            raise LookupError('Aguardando a abertura do caixa ser registrada no servidor.')
+        return server_id
+
+    def _cash_op(self, op):
+        data = op['payload']
+        if op['tipo'] == 'ABRIR':
+            caixa = self.client.abrir_caixa(data['dispositivo'], data['saldo'])
+            self.store.map_cash(self.tenant_id, data['local_id'], caixa['id'])
+            self.cash_mapped.emit(data['local_id'], int(caixa['id']))
+        elif op['tipo'] == 'MOVIMENTO':
+            self.client.movimentar_caixa(self._resolve_cash(data), data['tipo'], data['valor'], data['motivo'], chave=op['chave'])
+        elif op['tipo'] == 'FECHAR':
+            caixa = self._resolve_cash(data)
+            # O fechamento só sobe depois de todas as vendas do mesmo caixa.
+            for _, raw in self.store.pending_sales(self.tenant_id, include_rejected=True):
+                venda = json.loads(raw)
+                if venda.get('operador_local') == self.operator and (venda.get('caixa') == caixa or
+                        (data.get('caixa_local') and venda.get('caixa_local') == data.get('caixa_local'))):
+                    raise LookupError('Fechamento aguardando o envio (ou a revisão) das vendas deste caixa.')
+            self.client.fechar_caixa(caixa, data['saldo'])
+        self.store.finish_cash_op(op['chave'])
+        self.cash_op_done.emit(op['tipo'], op['chave'])
+
+    def _sync_catalog(self):
+        estado = self.store.sync_state(self.tenant_id)
+        hoje = datetime.now().strftime('%Y-%m-%d')
+        # Carga completa a cada hora e na virada do dia (promoções começam/terminam por data).
+        completa = not estado['cursor'] or estado['full_day'] != hoje or time.time() - estado['full_at'] > 3600
+        produtos = self.client.produtos() if completa else self.client.produtos(desde=estado['cursor'])
+        if completa:
+            self.store.replace_products(self.tenant_id, produtos)
+            try:
+                self.store.save_customers(self.tenant_id, self.client.clientes())
+            except requests.HTTPError:
+                pass
+        elif produtos:
+            self.store.apply_product_changes(self.tenant_id, produtos)
+        cursor = max((p.get('atualizado_em') or '' for p in produtos), default='') or estado['cursor']
+        self.store.save_sync_state(self.tenant_id, cursor, time.time() if completa else None, hoje if completa else None)
+        if completa or produtos:
+            self.catalog_changed.emit()
+
     def run(self):
-        pending = len(self.rows)
+        pending = len(self.rows) + (len(self.store.pending_cash_ops(self.tenant_id, self.operator)) if self.store else 0)
         errors = []
-        for key, raw in self.rows:
+        for kind, key, item, _ in self._queue():
+            if kind == 'caixa':
+                try:
+                    self._cash_op(item)
+                    pending -= 1
+                except (requests.ConnectionError, requests.Timeout):
+                    self.connection.emit(False, 'Sem conexão; nova tentativa automática.')
+                    return
+                except LookupError as exc:
+                    self.store.set_cash_op_error(key, str(exc))
+                    errors.append(f'{key[:8]}: {exc}')
+                except requests.HTTPError as exc:
+                    errors.append(f'{key[:8]}: {exc}')
+                    self.store.set_cash_op_error(key, str(exc), rejected=is_permanent_rejection(exc))
+                continue
+            raw = item
             payload = json.loads(raw)
             try:
+                if payload.get('caixa_local'):
+                    payload['caixa'] = self._resolve_cash(payload)
+                    payload.pop('caixa_local', None)
                 if payload.get('cliente_offline'):
                     customer = payload['cliente_offline']
                     saved = self.client.cadastrar_cliente_cpf(customer['documento'], customer['nome'], customer.get('telefone', ''))
                     payload['cliente'] = saved['id']
                 response = self.client.registrar_venda(payload)
                 pending -= 1
+                if self.store is not None:
+                    self.store.mark_synced(key)
                 self.result.emit(key, '', response)
             except (requests.ConnectionError, requests.Timeout):
                 self.result.emit(key, 'Sem conexão; nova tentativa automática.', None)
+                self.connection.emit(False, 'Sem conexão; nova tentativa automática.')
                 return
+            except LookupError as exc:
+                self.result.emit(key, str(exc), None)
             except requests.HTTPError as exc:
                 errors.append(f'{key[:8]}: {exc}')
                 if is_permanent_rejection(exc):
@@ -164,9 +295,31 @@ class PendingSyncWorker(QThread):
                 errors.append(f'{key[:8]}: {exc}')
                 self.result.emit(key, str(exc), None)
         try:
+            if self.store is not None:
+                self._sync_catalog()
             self.client.heartbeat(pending, '\n'.join(errors))
+            self.connection.emit(True, '')
+        except (requests.ConnectionError, requests.Timeout):
+            self.connection.emit(False, 'Sem conexão; nova tentativa automática.')
         except requests.RequestException:
             pass
+        auth = self.client.session.headers.get('Authorization', '')
+        refresh = self.client.refresh_token
+        if isinstance(auth, str) and auth:
+            self.auth_updated.emit(auth, refresh if isinstance(refresh, str) else '')
+
+
+SYNC_INTERVAL_MS = 10_000  # vendas e caixa sobem, preços e estoque descem
+
+
+def _cash_ref(cash_id):
+    return f"l:{cash_id[2:]}" if isinstance(cash_id, str) and cash_id.startswith('l:') else (f"s:{cash_id}" if cash_id else None)
+
+
+def _cash_from_ref(ref):
+    if not ref:
+        return None
+    return ref if ref.startswith('l:') else int(ref[2:])
 
 
 class PDVWindow(QMainWindow):
@@ -183,7 +336,9 @@ class PDVWindow(QMainWindow):
         self.loaded_quote = None
         self.sale_key = str(uuid.uuid4())
         self.discount_approval = None
-        self.online = True
+        # Login offline começa sem conexão; o primeiro envio bem-sucedido volta para online.
+        self.online = getattr(api, 'offline_login', False) is not True
+        self.offline_since = None if self.online else time.time()
         self.sync_worker = None
         self.total_discount = None
         self.quote_save_key = None
@@ -199,7 +354,7 @@ class PDVWindow(QMainWindow):
         QTimer.singleShot(1500, self._check_version)
         self.sync_timer = QTimer(self)
         self.sync_timer.timeout.connect(self._sync_pending)
-        self.sync_timer.start(15000)
+        self.sync_timer.start(SYNC_INTERVAL_MS)
 
     def _build(self):
         self.setStyleSheet("""
@@ -268,6 +423,10 @@ class PDVWindow(QMainWindow):
         header.addWidget(self.operator_label)
         header.addWidget(self.clock_label)
         header.addWidget(self.status)
+        self.connection_label = QLabel("● Conectando")
+        self.connection_label.setObjectName("connection")
+        self.connection_label.setToolTip("Sincronização automática a cada 10 segundos.")
+        header.addWidget(self.connection_label)
         layout.addLayout(header)
 
         self.product_banner = QLabel("Leia um código de barras ou pesquise um produto")
@@ -399,7 +558,18 @@ class PDVWindow(QMainWindow):
 
     def _select_company(self):
         try:
-            companies = self.api.minhas_empresas()
+            try:
+                companies = self.api.minhas_empresas()
+                self.online = True
+                try:
+                    self.store.save_offline_companies(self.api.base_url, self.api.username, companies)
+                except Exception:
+                    pass
+            except (requests.ConnectionError, requests.Timeout):
+                companies = list(getattr(self.api, 'cached_companies', None) or [])
+                if not companies:
+                    raise
+                self._set_online(False)
             for company in companies:
                 self.company.addItem(company["nome"], company["id"])
                 self.company_roles[str(company["id"])] = company.get("papel", "CAIXA")
@@ -448,20 +618,33 @@ class PDVWindow(QMainWindow):
         if self.cash_id:
             QMessageBox.information(self,'Caixa','Seu caixa já está aberto.')
             return
-        saldo, accepted = QInputDialog.getDouble(
-            self, "Abertura do caixa", "Saldo inicial em dinheiro (R$):",
-            0.00, 0.00, 10000000.00, 2,
-        )
-        if not accepted:
-            return
-        try:
-            caixa = self.api.abrir_caixa(socket.gethostname(), saldo)
-            self.cash_id = caixa["id"]
-            self.status.setText("Caixa aberto · online")
-        except Exception as exc:
-            self.cash_id = None
-            self.status.setText("Caixa indisponível")
-            QMessageBox.warning(self, "Abertura de caixa", str(exc))
+        resumed = self._resume_cash()
+        if resumed:
+            self.cash_id = resumed
+            self.status.setText("Caixa retomado" + (" · offline" if not self.online else ""))
+        else:
+            saldo, accepted = QInputDialog.getDouble(
+                self, "Abertura do caixa", "Saldo inicial em dinheiro (R$):",
+                0.00, 0.00, 10000000.00, 2,
+            )
+            if not accepted:
+                return
+            try:
+                if not self.online:
+                    raise requests.ConnectionError('offline')
+                caixa = self.api.abrir_caixa(socket.gethostname(), saldo)
+                self.cash_id = caixa["id"]
+                self.status.setText("Caixa aberto · online")
+            except (requests.ConnectionError, requests.Timeout):
+                self._set_online(False)
+                self.cash_id = self._open_cash_offline(saldo)
+                self.status.setText("Caixa aberto · offline (sobe na próxima sincronização)")
+            except Exception as exc:
+                self.cash_id = None
+                self.status.setText("Caixa indisponível")
+                QMessageBox.warning(self, "Abertura de caixa", str(exc))
+            if self.cash_id:
+                self.store.set_current_cash(self.tenant_id, self.api.username, _cash_ref(self.cash_id))
         self._load_catalog()
         attempt = self.store.checkout_attempt(self.tenant_id, self.api.username)
         if attempt:
@@ -475,18 +658,81 @@ class PDVWindow(QMainWindow):
             self._render_cart()
             QMessageBox.information(self, "Venda pendente recuperada", "Há uma tentativa de venda pendente deste operador. Clique em Finalizar para confirmar a mesma operação sem duplicar.")
 
+    def _resume_cash(self):
+        """Caixa aberto antes (reinício do PDV ou queda de internet) continua o mesmo."""
+        ref = self.store.current_cash(self.tenant_id, self.api.username)
+        cash = _cash_from_ref(ref) if isinstance(ref, str) else None
+        if isinstance(cash, str):
+            mapped = self.store.resolve_cash(self.tenant_id, cash[2:])
+            return mapped or cash
+        if cash and self.online:
+            try:
+                resumo = self.api.resumo_caixa(cash)
+                if resumo.get('estado', 'ABERTO') != 'ABERTO':
+                    raise ValueError('fechado')
+            except (requests.ConnectionError, requests.Timeout):
+                self._set_online(False)
+            except Exception:
+                self.store.set_current_cash(self.tenant_id, self.api.username, None)
+                return None
+        return cash
+
+    def _open_cash_offline(self, saldo):
+        local_id = str(uuid.uuid4())
+        self.store.queue_cash_op(self.tenant_id, self.api.username, 'ABRIR', {
+            'local_id': local_id, 'dispositivo': socket.gethostname(), 'saldo': str(Decimal(str(saldo)).quantize(Decimal('0.01'))),
+            'aberto_em': datetime.now().isoformat(timespec='seconds')})
+        return 'l:' + local_id
+
+    def _cash_is_local(self):
+        return isinstance(self.cash_id, str) and self.cash_id.startswith('l:')
+
+    def _set_online(self, online, message=''):
+        if online and not self.online:
+            self.status.setText('Conexão restabelecida · sincronizando')
+        if not online and self.online:
+            self.offline_since = time.time()
+        if online:
+            self.offline_since = None
+        self.online = online
+        self._update_connection_label(message)
+
+    def _update_connection_label(self, message=''):
+        if not hasattr(self, 'connection_label'):
+            return
+        try:
+            pendentes = self.store.pending_count(self.tenant_id, self.api.username) if self.tenant_id else 0
+        except Exception:
+            pendentes = 0
+        if self.online:
+            texto = '● Online' + (f' · {pendentes} pendente(s) enviando' if pendentes else '')
+            cor = '#2e7d32' if not pendentes else '#b26a00'
+        else:
+            minutos = int((time.time() - (self.offline_since or time.time())) // 60)
+            texto = f"● Offline há {minutos} min" if minutos else '● Offline'
+            texto += f' · {pendentes} guardada(s) neste PC' if pendentes else ''
+            cor = '#c62828'
+        self.connection_label.setText(texto)
+        self.connection_label.setStyleSheet(f'color: {cor}; font-weight: 700;')
+        if message:
+            self.connection_label.setToolTip(message)
+
     def _load_catalog(self):
         if not self.tenant_id:
             return
         try:
+            if not self.online and not getattr(self, '_force_catalog', False):
+                raise requests.ConnectionError('offline')
             self.products = self.api.produtos()
-            self.online = True
-            self.store.save_products(self.tenant_id, self.products)
+            self._set_online(True)
+            self.store.replace_products(self.tenant_id, self.products)
+            cursor = max((p.get('atualizado_em') or '' for p in self.products), default='')
+            self.store.save_sync_state(self.tenant_id, cursor, time.time(), datetime.now().strftime('%Y-%m-%d'))
             self.status.setText("Catálogo atualizado · online")
         except Exception:
-            self.online = False
+            self._set_online(False)
             self.products = self.store.list_products(self.tenant_id)
-            self.status.setText("Offline · catálogo em cache")
+            self.status.setText("Offline · catálogo neste computador")
         self._render_catalog()
         self._sync_pending()
 
@@ -796,11 +1042,13 @@ class PDVWindow(QMainWindow):
             cpf = normalize_cpf(cpf.strip())
             offline = False
             try:
+                if not self.online:
+                    raise requests.ConnectionError('offline')  # não espera o tempo limite a cada cliente
                 customer = self.api.cliente_cpf(cpf)
-                self.online = True
+                self._set_online(True)
             except (requests.ConnectionError, requests.Timeout):
                 offline = True
-                self.online = False
+                self._set_online(False)
                 customer = self.store.customer(self.tenant_id, cpf)
             if customer:
                 if QMessageBox.question(self, "Cliente encontrado", f"Utilizar o cadastro de {customer['nome']}?" + (" (cache local)" if offline else "")) != QMessageBox.StandardButton.Yes:
@@ -921,7 +1169,7 @@ class PDVWindow(QMainWindow):
             self._submit_checkout(self.checkout_payload)
             return
         if not self.cash_id:
-            QMessageBox.warning(self, "Caixa", "Abra o caixa com conexão antes de vender.")
+            QMessageBox.warning(self, "Caixa", "Abra o caixa antes de vender.")
             return
         if not self.cart:
             return
@@ -968,7 +1216,7 @@ class PDVWindow(QMainWindow):
         key = self.sale_key
         payload = {
             "idempotency_key": key,
-            "caixa": self.cash_id,
+            "caixa": None if self._cash_is_local() else self.cash_id,
             "observacao": "",
             "cliente": customer_id,
             "operador_local": self.api.username,
@@ -982,10 +1230,11 @@ class PDVWindow(QMainWindow):
             ],
             "pagamentos": payments,
         }
+        if self._cash_is_local():
+            payload['caixa_local'] = self.cash_id[2:]
         if customer.get('offline'):
             payload['cliente_offline'] = customer
-        if credit > 0 and not self.online:
-            QMessageBox.warning(self, "Venda a prazo", "Venda a prazo exige conexão para verificar o limite de crédito.")
+        if credit > 0 and not self.online and not self._offline_credit_ok(customer, credit):
             return
         if not self._ensure_discount_approval(key, payload['itens'], allow_auto=True):
             return
@@ -1003,8 +1252,22 @@ class PDVWindow(QMainWindow):
         self.company.setEnabled(False)
         self._submit_checkout(payload)
 
+    def _offline_credit_ok(self, customer, credit):
+        """Sem internet, a prazo só até o limite disponível conhecido na última sincronização."""
+        cached = (self.store.customer(self.tenant_id, customer.get('documento', '')) or {}) if customer.get('documento') else {}
+        if not customer.get('id') or 'limite_disponivel' not in cached:
+            QMessageBox.warning(self, "Venda a prazo", "Sem internet, a venda a prazo só é possível para clientes já sincronizados neste computador.")
+            return False
+        disponivel = Decimal(str(cached['limite_disponivel']))
+        if Decimal(str(credit)) > disponivel:
+            QMessageBox.warning(self, "Venda a prazo", f"Sem internet, o limite disponível conhecido é R$ {disponivel:.2f}.")
+            return False
+        return True
+
     def _submit_checkout(self, payload):
         try:
+            if not self.online or payload.get('caixa_local'):
+                raise requests.ConnectionError('offline')
             if payload.get('cliente_offline'):
                 local = payload['cliente_offline']
                 customer = self.api.cadastrar_cliente_cpf(local['documento'], local['nome'], local.get('telefone', ''))
@@ -1048,10 +1311,15 @@ class PDVWindow(QMainWindow):
             self._render_cart()
             self._load_catalog()
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
-            self.online = False
-            if Decimal(payload.get('credito', '0')) > 0:
-                QMessageBox.warning(self, "Crédito pendente", "A confirmação da venda a prazo exige conexão. Finalize novamente ao reconectar.")
-                return
+            self._set_online(False)
+            credit = Decimal(payload.get('credito', '0'))
+            if credit > 0:
+                customer = self.selected_customer or {}
+                if not self._offline_credit_ok(customer, credit):
+                    return
+                cached = self.store.customer(self.tenant_id, customer['documento'])
+                cached['limite_disponivel'] = str(Decimal(str(cached['limite_disponivel'])) - credit)
+                self.store.save_customer(self.tenant_id, cached)
             self.store.queue_sale(self.tenant_id, payload, "Aguardando conexão")
             path = self.store.save_receipt('PENDENTE-' + payload['idempotency_key'], self._build_receipt('PENDENTE — ' + payload['idempotency_key']))
             # Local quantities are provisional; the server validates again on sync.
@@ -1072,6 +1340,7 @@ class PDVWindow(QMainWindow):
             self._render_cart()
             self._render_catalog()
             self.status.setText('Offline · venda salva localmente · aguardando sincronização')
+            self._update_connection_label()
             QMessageBox.information(self, "Venda registrada localmente", f"Comprovante provisório: {path}\nA sincronização é automática quando a conexão voltar. Divergências ficarão pendentes de revisão.")
         except requests.HTTPError as exc:
             if exc.response is not None and 400 <= exc.response.status_code < 500:
@@ -1353,6 +1622,9 @@ button {{ width:100%; padding:10px; margin:12px 0; }}
         if not self.cash_id:
             QMessageBox.warning(self, "Caixa fechado", "Abra o caixa para finalizar este pedido.")
             return
+        if self._cash_is_local() or not self.online:
+            QMessageBox.warning(self, "Sem internet", "Pedidos web só podem ser finalizados com conexão.")
+            return
         payments = self._collect_payments(total)
         if payments is None:
             return
@@ -1400,27 +1672,38 @@ button {{ width:100%; padding:10px; margin:12px 0; }}
         )
         if not accepted or not reason.strip():
             return
+        tipo = "SANGRIA" if kind == "Sangria" else "SUPRIMENTO"
+        valor = str(Decimal(str(amount)).quantize(Decimal('0.01')))
         try:
-            self.api.movimentar_caixa(
-                self.cash_id, "SANGRIA" if kind == "Sangria" else "SUPRIMENTO",
-                amount, reason.strip(),
-            )
+            if not self.online or self._cash_is_local():
+                raise requests.ConnectionError('offline')
+            self.api.movimentar_caixa(self.cash_id, tipo, valor, reason.strip(), chave=str(uuid.uuid4()))
             QMessageBox.information(self, "Caixa", f"{kind} registrada e auditada.")
+        except (requests.ConnectionError, requests.Timeout):
+            self._set_online(False)
+            dados = {'tipo': tipo, 'valor': valor, 'motivo': reason.strip()[:250]}
+            dados.update({'caixa_local': self.cash_id[2:]} if self._cash_is_local() else {'caixa': self.cash_id})
+            self.store.queue_cash_op(self.tenant_id, self.api.username, 'MOVIMENTO', dados)
+            self._update_connection_label()
+            QMessageBox.information(self, "Caixa", f"{kind} guardada neste computador; sobe com a próxima sincronização.")
         except Exception as exc:
             QMessageBox.critical(self, "Falha na movimentação", str(exc))
 
     def _close_cash(self):
-        if self.store.pending_errors(self.tenant_id, self.api.username):
+        if self.store.rejected_sales(self.tenant_id, self.api.username):
             QMessageBox.warning(
                 self, "Sincronização pendente",
-                "Há vendas locais deste operador ainda não registradas no servidor. "
-                "Abra Sincronização para reenviar ou, se o servidor recusou, descartar com autorização do gerente.",
+                "Há vendas locais recusadas pelo servidor. "
+                "Abra Sincronização para reenviar ou descartar com autorização do gerente antes de fechar.",
             )
             return
         if self.checkout_payload:
             QMessageBox.warning(self, "Venda pendente", "Confirme a venda pendente antes de fechar o caixa.")
             return
         if not self.cash_id:
+            return
+        if not self.online or self._cash_is_local() or self.store.pending_errors(self.tenant_id, self.api.username):
+            self._close_cash_offline()
             return
         try:
             summary = self.api.resumo_caixa(self.cash_id)
@@ -1451,9 +1734,34 @@ button {{ width:100%; padding:10px; margin:12px 0; }}
                 f"Caixa encerrado. Diferença apurada: R$ {difference:.2f}.",
             )
             self.cash_id = None
+            self.store.set_current_cash(self.tenant_id, self.api.username, None)
             self.status.setText("Caixa fechado")
+        except (requests.ConnectionError, requests.Timeout):
+            self._set_online(False)
+            QMessageBox.warning(self, "Fechamento do caixa", "A conexão caiu. Feche de novo: o fechamento será guardado neste computador.")
         except Exception as exc:
             QMessageBox.critical(self, "Falha ao fechar caixa", str(exc))
+
+    def _close_cash_offline(self):
+        """Fechamento às cegas: o servidor calcula o esperado e a diferença quando receber."""
+        amount, accepted = QInputDialog.getDouble(
+            self, "Fechamento do caixa (sem internet)",
+            "Conte o dinheiro da gaveta e informe o valor (R$).\n"
+            "O valor esperado e a diferença serão calculados pelo servidor depois que as vendas subirem.",
+            0.00, 0.00, 10000000.00, 2,
+        )
+        if not accepted:
+            return
+        if QMessageBox.question(self, "Confirmar fechamento", f"Contado: R$ {Decimal(str(amount)):.2f}\n\nFechar este caixa?") != QMessageBox.StandardButton.Yes:
+            return
+        dados = {'saldo': str(Decimal(str(amount)).quantize(Decimal('0.01')))}
+        dados.update({'caixa_local': self.cash_id[2:]} if self._cash_is_local() else {'caixa': self.cash_id})
+        self.store.queue_cash_op(self.tenant_id, self.api.username, 'FECHAR', dados)
+        self.store.set_current_cash(self.tenant_id, self.api.username, None)
+        self.cash_id = None
+        self.status.setText("Caixa fechado neste computador · aguardando sincronização")
+        self._update_connection_label()
+        QMessageBox.information(self, "Caixa fechado", "Fechamento guardado. Ele sobe depois das vendas deste caixa, e a diferença aparece no painel.")
 
     def _show_pending(self):
         from app.pending import PendingSalesDialog
@@ -1506,11 +1814,13 @@ button {{ width:100%; padding:10px; margin:12px 0; }}
             password = ''
 
     def _sync_pending(self):
-        if not self.tenant_id or not self.cash_id or (self.sync_worker and self.sync_worker.isRunning()):
+        if not self.tenant_id or (self.sync_worker and self.sync_worker.isRunning()):
+            self._update_connection_label()
             return
-        rows = [(key, raw) for key, raw in self.store.pending_sales(self.tenant_id) if json.loads(raw).get('operador_local') == self.api.username]
+        operator = self.api.username
+        rows = [(key, raw) for key, raw in self.store.pending_sales(self.tenant_id) if json.loads(raw).get('operador_local') == operator]
         tenant = self.tenant_id
-        self.sync_worker = PendingSyncWorker(self.api, rows, self)
+        self.sync_worker = PendingSyncWorker(self.api, rows, self, store=LocalStore(self.store.path), tenant_id=tenant, operator=operator)
         def result(key, error, response):
             if error:
                 self.store.set_error(key, error)
@@ -1524,14 +1834,34 @@ button {{ width:100%; padding:10px; margin:12px 0; }}
                     path.write_text(text, encoding='utf-8')
                 self.store.mark_synced(key)
                 if self.tenant_id == tenant:
-                    self.online = True
                     self.status.setText(f"Venda sincronizada #{response['id']}")
         def rejected(key, error):
             self.store.set_rejected(key, error)
             if self.tenant_id == tenant:
                 self.status.setText('Venda pendente recusada pelo servidor · revise em Sincronização')
+        def mapped(local_id, server_id):
+            if self.tenant_id == tenant and self.cash_id == 'l:' + local_id:
+                self.cash_id = server_id
+                self.store.set_current_cash(tenant, operator, _cash_ref(server_id))
+        def catalog():
+            if self.tenant_id == tenant:
+                self.products = self.store.list_products(tenant)
+                self._render_catalog()
+        def connection(online, message):
+            if self.tenant_id == tenant:
+                self._set_online(online, message)
+        def auth(header, refresh):
+            self.api.session.headers['Authorization'] = header
+            if refresh:
+                self.api.refresh_token = refresh
+            self.api.offline_login = False
         self.sync_worker.result.connect(result)
         self.sync_worker.rejected.connect(rejected)
+        self.sync_worker.cash_mapped.connect(mapped)
+        self.sync_worker.catalog_changed.connect(catalog)
+        self.sync_worker.connection.connect(connection)
+        self.sync_worker.auth_updated.connect(auth)
+        self.sync_worker.finished.connect(lambda: self._update_connection_label())
         self.sync_worker.start()
 
     def closeEvent(self, event):
