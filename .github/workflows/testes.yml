@@ -4,6 +4,11 @@ on:
   push:
   pull_request:
 
+# Publicações em sequência no mesmo branch cancelam a execução anterior.
+concurrency:
+  group: testes-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   backend:
     runs-on: ubuntu-latest

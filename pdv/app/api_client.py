@@ -162,7 +162,26 @@ class ArmazemAPI:
 
     def heartbeat(self, pendentes, erros=''):
         import socket
-        return self._request('POST','/api/v1/terminais/heartbeat/',json={'identificador':socket.gethostname() + ':' + self.username,'pendentes':pendentes,'erros':erros}).json()
+        from app import VERSION
+        return self._request('POST','/api/v1/terminais/heartbeat/',json={'identificador':socket.gethostname() + ':' + self.username,'pendentes':pendentes,'erros':erros,'versao':VERSION}).json()
+
+    def versao_pdv(self):
+        return self._request('GET', '/api/v1/pdv/versao/').json()
+
+    def alterar_senha(self, senha_atual, nova_senha):
+        return self._request('POST', '/api/v1/conta/senha/', json={'senha_atual': senha_atual, 'nova_senha': nova_senha}).json()
+
+    def pix_criar(self, valor, chave):
+        return self._request('POST', '/api/v1/pix/cobrancas/', json={'valor': str(valor), 'chave': chave}).json()
+
+    def pix_consultar(self, cobranca_id):
+        return self._request('GET', f'/api/v1/pix/cobrancas/{int(cobranca_id)}/').json()
+
+    def nfce_emitir(self, venda_id):
+        return self._request('POST', f'/api/v1/vendas/{int(venda_id)}/nfce/', json={}).json()
+
+    def nfce_consultar(self, venda_id):
+        return self._request('GET', f'/api/v1/vendas/{int(venda_id)}/nfce/').json()
 
     def descartar_venda_offline(self, chave, usuario, senha, justificativa, erro='', venda=None):
         return self._request('POST', '/api/v1/vendas-offline/descartar/', json={

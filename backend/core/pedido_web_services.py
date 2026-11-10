@@ -25,7 +25,7 @@ def finalizar_pedido_web(*, empresa, usuario, pedido_id, caixa_id, pagamentos):
     for item in itens:
         if item.produto.empresa_id != empresa.pk or not item.produto.ativo:
             raise ValidationError({"itens": f"{item.nome_produto} não está mais disponível."})
-        if item.produto.preco_venda != item.preco_unitario:
+        if item.produto.preco_atual != item.preco_unitario:
             raise ValidationError({"itens": f"O preço de {item.nome_produto} mudou. Atualize o pedido antes de cobrar."})
     try:
         caixa = Caixa.objects.get(pk=caixa_id, empresa=empresa, operador=usuario, estado=Caixa.Estado.ABERTO)

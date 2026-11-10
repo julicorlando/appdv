@@ -1,0 +1,7 @@
+Olá, {{ user.get_username }}.
+
+Recebemos um pedido para redefinir sua senha do ApPdv. Para criar uma nova senha, abra:
+
+{{ protocol }}://{{ domain }}{% url 'redefinir-senha-confirmar' uidb64=uid token=token %}
+
+Se não foi você, ignore esta mensagem; sua senha continua a mesma.

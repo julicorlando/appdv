@@ -19,7 +19,8 @@ AREAS = {'painel':'','produtos':'produtos/','compras':'compras/','inventario':'i
          'sincronizacao':'sincronizacao/','relatorios':'relatorios/','reposicao':'reposicao/',
          'descontos':'descontos/','configuracao':'configuracao/','fiscal':'fiscal/',
          'contas-receber':'contas-receber/','contas-pagar':'contas-pagar/',
-         'autorizacoes':'autorizacoes/','vendas':'vendas/','pedidos-web':'pedidos-web/', 'equipe':'equipe/'}
+         'autorizacoes':'autorizacoes/','vendas':'vendas/','pedidos-web':'pedidos-web/', 'equipe':'equipe/',
+         'fornecedores':'fornecedores/','etiquetas':'etiquetas/','relatorios-gerenciais':'relatorios/gerenciais/'}
 
 
 class DesktopSessionView(TenantAPIView):

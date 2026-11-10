@@ -10,7 +10,7 @@ import uuid
 from decimal import Decimal
 from pathlib import Path
 
-from PySide6.QtGui import QIcon, QPixmap
+from PySide6.QtGui import QDesktopServices, QIcon, QPixmap
 from PySide6.QtCore import QUrl, QTimer, Qt, QSettings, QThread, Signal
 import requests
 from PySide6.QtWidgets import (
@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
+from app import VERSION, parse_version
 from app.api_client import ArmazemAPI
 from app.local_store import LocalStore
 from app.payments import PaymentDialog
@@ -190,11 +191,12 @@ class PDVWindow(QMainWindow):
         self.current_product = None
         self.company_roles = {}
         self.tenant_role = "CAIXA"
-        self.setWindowTitle("ApPdv — Frente de Caixa")
+        self.setWindowTitle(f"ApPdv {VERSION} — Frente de Caixa")
         self.setWindowIcon(QIcon(asset_path("appdv-icon-256.png")))
         self.resize(1120, 740)
         self._build()
         self._select_company()
+        QTimer.singleShot(1500, self._check_version)
         self.sync_timer = QTimer(self)
         self.sync_timer.timeout.connect(self._sync_pending)
         self.sync_timer.start(15000)
@@ -379,7 +381,13 @@ class PDVWindow(QMainWindow):
         self.admin_button = QPushButton("Gestão da empresa")
         self.admin_button.clicked.connect(self._open_admin_panel)
         self.admin_button.setVisible(False)
-        for button in (self.pay, self.quote, self.find_quote, self.web_order, self.web_orders, self.cash_move, self.close_cash, self.cancel_sale, self.open_cash_button, self.admin_button):
+        self.nfce_button = QPushButton("NFC-e da última venda")
+        self.nfce_button.clicked.connect(self._nfce_last_sale)
+        self.nfce_button.setVisible(False)
+        self.password_button = QPushButton("Trocar senha")
+        self.password_button.clicked.connect(self._change_password)
+        self.last_sale_id = None
+        for button in (self.pay, self.quote, self.find_quote, self.web_order, self.web_orders, self.cash_move, self.close_cash, self.cancel_sale, self.open_cash_button, self.nfce_button, self.admin_button, self.password_button):
             actions.addWidget(button)
         layout.addLayout(actions)
 
@@ -933,6 +941,8 @@ class PDVWindow(QMainWindow):
             return
         customer_id = customer['id']
         dialog = PaymentDialog(total, customer, self)
+        if self.online and self.company_info.get('pix_configurado'):
+            dialog.configure_pix(self.api)
         def change_discount():
             self._discount_cart_item()
             gross = sum(((Decimal(str(item['produto']['preco_venda'])) * item['quantidade']).quantize(Decimal('.01')) for item in self.cart.values()), Decimal('0'))
@@ -1006,12 +1016,26 @@ class PDVWindow(QMainWindow):
             box = QMessageBox(self)
             box.setWindowTitle("Venda concluída")
             box.setText(f"Venda #{response['id']} registrada. Cupom interno salvo.")
-            box.setInformativeText(str(receipt_path))
+            nfce = response.get("nfce") or {}
+            self.last_sale_id = response["id"]
+            self.nfce_button.setVisible(bool(self.company_info.get('nfce_configurada')))
+            details = str(receipt_path)
+            if nfce:
+                details += f"\nNFC-e: {nfce.get('estado_texto', '')} {nfce.get('mensagem', '')}".rstrip()
+            box.setInformativeText(details)
             open_button = box.addButton("Abrir cupom", QMessageBox.ButtonRole.AcceptRole)
+            danfe_button = box.addButton("Imprimir NFC-e", QMessageBox.ButtonRole.ActionRole) if nfce.get("danfe_url") else None
+            emit_button = None
+            if self.company_info.get('nfce_configurada') and not nfce.get("danfe_url"):
+                emit_button = box.addButton("Emitir NFC-e", QMessageBox.ButtonRole.ActionRole)
             box.addButton("Fechar", QMessageBox.ButtonRole.RejectRole)
             box.exec()
             if box.clickedButton() == open_button:
                 self._preview_document(receipt_path)
+            elif danfe_button is not None and box.clickedButton() == danfe_button:
+                self._open_danfe(nfce["danfe_url"])
+            elif emit_button is not None and box.clickedButton() == emit_button:
+                self._nfce_last_sale()
             self.store.clear_checkout_attempt(self.tenant_id, self.api.username)
             self.checkout_payload = None
             self.sale_key = str(uuid.uuid4())
@@ -1057,6 +1081,70 @@ class PDVWindow(QMainWindow):
             QMessageBox.critical(self, "Venda recusada", str(exc))
         except Exception as exc:
             QMessageBox.critical(self, "Confirmação pendente", "Mantenha a tentativa e clique em Finalizar novamente. " + str(exc))
+
+    # ------------------------------------------------------------------ NFC-e
+    def _open_danfe(self, url):
+        target = QUrl(url)
+        if target.scheme() == "https" and target.host() in ("api.focusnfe.com.br", "homologacao.focusnfe.com.br"):
+            QDesktopServices.openUrl(target)
+        else:
+            QMessageBox.warning(self, "NFC-e", "Endereço do DANFE inesperado; abra pela Central fiscal.")
+
+    def _nfce_last_sale(self):
+        if not self.last_sale_id:
+            QMessageBox.information(self, "NFC-e", "Finalize uma venda primeiro.")
+            return
+        try:
+            data = self.api.nfce_emitir(self.last_sale_id).get("nfce") or {}
+        except requests.RequestException as exc:
+            QMessageBox.warning(self, "NFC-e não emitida", str(exc))
+            return
+        if data.get("danfe_url"):
+            self._open_danfe(data["danfe_url"])
+        else:
+            QMessageBox.information(self, "NFC-e", f"Venda #{self.last_sale_id}: {data.get('estado_texto', '')}\n{data.get('mensagem', '')}")
+
+    # ------------------------------------------------------------- conta e versão
+    def _change_password(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Trocar senha")
+        form = QFormLayout(dialog)
+        current, new, repeat = QLineEdit(), QLineEdit(), QLineEdit()
+        for field in (current, new, repeat):
+            field.setEchoMode(QLineEdit.EchoMode.Password)
+        form.addRow("Senha atual", current)
+        form.addRow("Nova senha (mín. 10 caracteres)", new)
+        form.addRow("Repita a nova senha", repeat)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        form.addRow(buttons)
+        try:
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            if new.text() != repeat.text():
+                QMessageBox.warning(self, "Trocar senha", "A confirmação não confere com a nova senha.")
+                return
+            self.api.alterar_senha(current.text(), new.text())
+            QMessageBox.information(self, "Trocar senha", "Senha alterada. Use a nova senha no próximo acesso, aqui e no painel.")
+        except requests.RequestException as exc:
+            QMessageBox.warning(self, "Senha não alterada", str(exc))
+        finally:
+            for field in (current, new, repeat):
+                field.clear()
+
+    def _check_version(self):
+        try:
+            data = self.api.versao_pdv()
+        except Exception:
+            return
+        if parse_version(VERSION) < parse_version(data.get("versao_minima", "0")):
+            link = data.get("download_url") or "o link enviado pelo administrador"
+            QMessageBox.warning(self, "Atualize o ApPdv",
+                                f"Esta instalação ({VERSION}) está abaixo da versão mínima ({data.get('versao_minima')}). "
+                                f"Baixe o instalador novo em {link} antes de continuar vendendo.")
+        elif parse_version(VERSION) < parse_version(data.get("versao_atual", "0")):
+            self.status.setText(f"Nova versão do ApPdv disponível ({data.get('versao_atual')}).")
 
     def _create_web_order(self):
         if self.checkout_payload:

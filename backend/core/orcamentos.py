@@ -60,7 +60,7 @@ def salvar_orcamento(empresa, membro, dados):
             desconto = Decimal(str(linha.get('desconto', '0')))
             if not quantidade.is_finite() or quantidade <= 0 or quantidade.as_tuple().exponent < -3 or not desconto.is_finite():
                 raise ValueError
-            bruto = (produto.preco_venda * quantidade).quantize(Decimal('.01'))
+            bruto = (produto.preco_atual * quantidade).quantize(Decimal('.01'))
             if desconto < 0 or desconto > bruto or produto.pk in vistos:
                 raise ValueError
             valor = bruto - desconto
@@ -70,7 +70,7 @@ def salvar_orcamento(empresa, membro, dados):
             raise ValidationError({'itens': 'Produto, quantidade ou desconto inválido ou não autorizado.'})
         vistos.add(produto.pk)
         itens.append({'produto': produto.pk, 'codigo': produto.codigo, 'nome': produto.nome,
-            'unidade': produto.unidade, 'quantidade': str(quantidade), 'preco_venda': str(produto.preco_venda),
+            'unidade': produto.unidade, 'quantidade': str(quantidade), 'preco_venda': str(produto.preco_atual),
             'desconto': str(desconto), 'total': str(valor)})
         total += valor
     if total > Decimal('9999999999.99'):

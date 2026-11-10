@@ -8,7 +8,7 @@
 </head>
 <body>
 <header class="topbar"><a class="brand" href="/" aria-label="ApPdv"><img src="/static/brand/appdv-logo-web.png" alt="ApPdv — Sistema de vendas e gerenciamento para armazéns"></a>
-{% if user.is_authenticated %}<div class="top-actions"><span>{{ user.get_username }}</span><form method="post" action="{% url 'logout' %}">{% csrf_token %}<button class="ghost" type="submit">Sair</button></form></div>{% endif %}
+{% if user.is_authenticated %}<div class="top-actions"><span>{{ user.get_username }}</span><a class="ghost" href="{% url 'minha-senha' %}">Minha senha</a><form method="post" action="{% url 'logout' %}">{% csrf_token %}<button class="ghost" type="submit">Sair</button></form></div>{% endif %}
 </header>
 {% if user.is_authenticated and user.is_superuser %}
 <nav class="global-nav master-nav" aria-label="Navegação principal"><a class="nav-home" href="{% url 'master' %}"{% if request.resolver_match.url_name == "master" %} aria-current="page"{% endif %}>Painel Master</a></nav>
@@ -23,13 +23,13 @@
 <a href="{% url 'empresa-pedidos-web' empresa.id %}"{% if request.resolver_match.url_name == "empresa-pedidos-web" %} aria-current="page"{% endif %}>Pedidos web{% if pedidos_confirmados %} <span class="nav-count">{{ pedidos_confirmados }}</span>{% endif %}</a>
 </div></details>
 {% if membro.papel != "CAIXA" %}
-<details class="nav-group" {% if request.resolver_match.url_name == "empresa-produtos" or request.resolver_match.url_name == "empresa-inventario" or request.resolver_match.url_name == "empresa-movimentacoes" or request.resolver_match.url_name == "empresa-compras" %}open{% endif %}><summary>Estoque e compras</summary><div class="nav-menu"><a href="{% url 'gestao-depositos' empresa.id %}">Depósitos e transferências</a><a href="{% url 'gestao-entregas' empresa.id %}">Separação e entregas</a><a href="{% url 'gestao-reposicao' empresa.id %}">Compras e reposição</a>
+<details class="nav-group" {% if request.resolver_match.url_name == "empresa-produtos" or request.resolver_match.url_name == "empresa-inventario" or request.resolver_match.url_name == "empresa-movimentacoes" or request.resolver_match.url_name == "empresa-compras" %}open{% endif %}><summary>Estoque e compras</summary><div class="nav-menu"><a href="{% url 'gestao-depositos' empresa.id %}">Depósitos e transferências</a><a href="{% url 'empresa-fornecedores' empresa.id %}">Fornecedores</a><a href="{% url 'empresa-etiquetas' empresa.id %}">Etiquetas de preço</a><a href="{% url 'gestao-entregas' empresa.id %}">Separação e entregas</a><a href="{% url 'gestao-reposicao' empresa.id %}">Compras e reposição</a>
 <a href="{% url 'empresa-produtos' empresa.id %}"{% if request.resolver_match.url_name == "empresa-produtos" %} aria-current="page"{% endif %}>Produtos e estoque</a>
 <a href="{% url 'empresa-inventario' empresa.id %}"{% if request.resolver_match.url_name == "empresa-inventario" %} aria-current="page"{% endif %}>Inventário</a>
 <a href="{% url 'empresa-movimentacoes' empresa.id %}"{% if request.resolver_match.url_name == "empresa-movimentacoes" %} aria-current="page"{% endif %}>Movimentações</a>
 <a href="{% url 'empresa-compras' empresa.id %}"{% if request.resolver_match.url_name == "empresa-compras" %} aria-current="page"{% endif %}>Compras e NF-e</a>
 </div></details>
-<details class="nav-group" {% if request.resolver_match.url_name == "empresa-clientes" or request.resolver_match.url_name == "empresa-contas-receber" or request.resolver_match.url_name == "empresa-contas-pagar" %}open{% endif %}><summary>Clientes e financeiro</summary><div class="nav-menu"><a href="{% url 'gestao-devolucoes' empresa.id %}">Trocas e devoluções</a><a href="{% url 'gestao-caixas' empresa.id %}">Conferência de caixas</a><a href="{% url 'gestao-relatorios' empresa.id %}">Margens e resultados</a>
+<details class="nav-group" {% if request.resolver_match.url_name == "empresa-clientes" or request.resolver_match.url_name == "empresa-contas-receber" or request.resolver_match.url_name == "empresa-contas-pagar" %}open{% endif %}><summary>Clientes e financeiro</summary><div class="nav-menu"><a href="{% url 'gestao-devolucoes' empresa.id %}">Trocas e devoluções</a><a href="{% url 'gestao-caixas' empresa.id %}">Conferência de caixas</a><a href="{% url 'gestao-relatorios' empresa.id %}">Margens e resultados</a><a href="{% url 'empresa-relatorios-gerenciais' empresa.id %}">Relatórios gerenciais</a>
 <a href="{% url 'empresa-clientes' empresa.id %}"{% if request.resolver_match.url_name == "empresa-clientes" %} aria-current="page"{% endif %}>Clientes</a>
 <a href="{% url 'empresa-contas-receber' empresa.id %}"{% if request.resolver_match.url_name == "empresa-contas-receber" %} aria-current="page"{% endif %}>Contas a receber</a>
 <a href="{% url 'empresa-contas-pagar' empresa.id %}"{% if request.resolver_match.url_name == "empresa-contas-pagar" %} aria-current="page"{% endif %}>Contas a pagar</a>

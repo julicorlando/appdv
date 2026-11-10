@@ -235,7 +235,7 @@ def vender_orcamento(empresa,usuario,dados):
     frete=order.frete if order else ZERO
     products={p.pk:p for p in Produto.objects.select_for_update().filter(empresa=empresa,ativo=True,pk__in=[i['produto'] for i in quote.itens]).order_by('pk')}
     if len(products)!=len(quote.itens):raise ValidationError('Há produto indisponível no orçamento.')
-    current=sum(((products[i['produto']].preco_venda*Decimal(i['quantidade'])).quantize(Decimal('.01'))-Decimal(i['desconto']) for i in quote.itens),ZERO)+frete
+    current=sum(((products[i['produto']].preco_atual*Decimal(i['quantidade'])).quantize(Decimal('.01'))-Decimal(i['desconto']) for i in quote.itens),ZERO)+frete
     if str(dados.get('total_confirmado'))!=str(current.quantize(Decimal('.01'))):raise ValidationError('Preços ou frete alterados. Reabra o orçamento antes de cobrar.')
     payload=dict(dados)
     if order:

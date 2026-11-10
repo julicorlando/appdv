@@ -10,14 +10,14 @@ from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.db import transaction
 from django.db.models import Count, Sum, F
-from django.http import HttpResponse, HttpResponseNotAllowed
+from django.http import Http404, HttpResponse, HttpResponseNotAllowed
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.utils.text import slugify
 from .forms import CategoriaSimpleForm, EmpresaForm, EmpresaLogoForm, MembroForm, ProdutoForm
 from .inventory import concluir_contagem, gerar_contagens_aleatorias, importar_planilha, iniciar_contagem
 from .purchases import confirmar_recebimento, criar_compra_manual, importar_nfe
-from .models import Cliente, ContaPagar, PagamentoContaPagar, ContaReceber, RecebimentoConta, Categoria, CompraEntrada, Empresa, InventarioContagem, ItemContagem, MembroEmpresa, MovimentacaoEstoque, PedidoWeb, Produto, TokenAutorizacao, Venda
+from .models import Cliente, ContaPagar, Fornecedor, PagamentoContaPagar, ContaReceber, RecebimentoConta, Categoria, CompraEntrada, Empresa, InventarioContagem, ItemContagem, MembroEmpresa, MovimentacaoEstoque, PedidoWeb, Produto, TokenAutorizacao, Venda
 
 User = get_user_model()
 
@@ -174,6 +174,8 @@ def caixa_web(request, empresa_id):
     return render(request, "caixa_web.html", {
         "loja": membro.empresa, "caixa": caixa,
         "meios": [(v,l) for v,l in Transacao.Meio.choices if v != "LOJA"],
+        "pix_configurado": bool(membro.empresa.mp_access_token),
+        "nfce_configurada": bool(membro.empresa.focus_token),
     })
 
 
@@ -260,7 +262,8 @@ def empresa_produtos(request, empresa_id):
         return redirect("empresa-produtos", empresa_id=empresa_id)
     return render(request, "empresa_produtos.html", {
         "membro": membro, "empresa": membro.empresa, "form": form,
-        "produtos": Produto.objects.filter(empresa=membro.empresa).select_related("categoria").order_by("nome"),
+        "produtos": Produto.objects.filter(empresa=membro.empresa).select_related("categoria").order_by("-ativo", "nome"),
+        "demo_ativos": Produto.objects.filter(empresa=membro.empresa, codigo__startswith="DEMO-", ativo=True).count(),
     })
 
 
@@ -798,11 +801,13 @@ def empresa_contas_pagar(request, empresa_id):
     ).select_related("fornecedor", "compra").order_by("vencimento")
     return render(request, "empresa_contas_pagar.html", {
         "empresa": membro.empresa, "membro": membro, "contas": contas,
+        "fornecedores": Fornecedor.objects.filter(empresa=membro.empresa, ativo=True).order_by("nome"),
+        "categorias": ContaPagar._meta.get_field("categoria").choices,
     })
 
 
-def logo_empresa(request, path):
-    """Serve somente os logos enviados pelas empresas.
+def logo_empresa(request, path, pasta="empresas/logos"):
+    """Serve somente imagens públicas: logos das empresas e fotos de produtos.
 
     O restante de MEDIA_ROOT (XML e DANFE fiscais) continua sem acesso público.
     """
@@ -810,7 +815,9 @@ def logo_empresa(request, path):
     from django.views.static import serve
     if request.method not in ("GET", "HEAD"):
         return HttpResponseNotAllowed(["GET", "HEAD"])
-    response = serve(request, path, document_root=settings.MEDIA_ROOT / "empresas" / "logos")
+    if pasta not in ("empresas/logos", "produtos/fotos"):
+        raise Http404()
+    response = serve(request, path, document_root=settings.MEDIA_ROOT / pasta)
     response["Cache-Control"] = "public, max-age=3600"
     response["X-Content-Type-Options"] = "nosniff"
     return response

@@ -79,6 +79,17 @@ As operações protegidas exigem conexão com o servidor. Vendas que falham por 
 
 Todas as chamadas de negócio exigem JWT e `X-Empresa-ID`.
 
+## Novidades da versão 0.3 (painel e PDV instalado)
+
+- **Produtos:** edição completa no painel (preço, inativação, foto, endereço), promoção com período (o preço promocional vale no PDV, no caixa web, em orçamentos e pedidos), dados fiscais (NCM, CEST, CFOP, CSOSN/CST, origem), etiquetas de preço com código de barras EAN-13 e geração de códigos internos, inativação dos produtos de teste.
+- **NFC-e (Focus NFe):** emissão, consulta e cancelamento na Central fiscal; emissão no PDV e no caixa web logo após a venda; emissão automática opcional. Configure o token da empresa e o CST de PIS/COFINS em *Dados da empresa*; certificado A1 e CSC ficam no painel da Focus. Comece em homologação.
+- **PIX (Mercado Pago):** QR Code dinâmico no PDV e no caixa web, com confirmação automática (consulta ao Mercado Pago; o webhook `/api/v1/pix/webhook/<empresa>/` só dispara a consulta). A cobrança paga é vinculada à venda e não pode ser reutilizada.
+- **Caixa:** gerente fecha pelo painel o caixa que o operador deixou aberto (com contagem, motivo e auditoria).
+- **Senhas:** "Minha senha" no painel e "Trocar senha" no PDV; administrador define senha provisória em *Equipe*; "Esqueci minha senha" por e-mail quando `EMAIL_HOST` estiver configurado.
+- **Financeiro:** cadastro de fornecedores, contas e despesas avulsas (aluguel, energia…), extrato do cliente, relatórios gerenciais (formas de pagamento, vendas por dia, fluxo de caixa, curva ABC, estoque valorizado) com exportação para Excel.
+- **Backup:** `python manage.py backup_dados` grava uma cópia compactada em `/app/backups` (volume `app_backups`) e mantém as 14 mais recentes. Agende no Coolify (*Scheduled Tasks*) e copie periodicamente para fora do servidor.
+- **PDV instalado 0.3.0:** novos módulos de gestão, PIX, NFC-e, troca de senha, aviso de versão desatualizada (`PDV_VERSAO_MINIMA`). O instalador é gerado pelo GitHub Actions (*Instalador do PDV*); uma tag `pdv-v0.3.0` publica o instalador em *Releases*.
+
 ## Segurança em produção
 
 Com `DEBUG=False` o backend não inicia sem `SECRET_KEY` própria, redireciona para HTTPS, marca os cookies como seguros e envia HSTS (30 dias; ajuste com `SECURE_HSTS_SECONDS`). Configure o endereço do servidor no PDV com `https://`. Login (API e painel) e senhas de gerente digitadas no PDV têm limite de tentativas por usuário e por IP (`THROTTLE_*`, `NUM_PROXIES`). Somente os logos das empresas (`/media/empresas/logos/`) são servidos publicamente; XML e DANFE fiscais continuam sem acesso público.

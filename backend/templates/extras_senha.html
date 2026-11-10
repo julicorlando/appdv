@@ -1,0 +1,5 @@
+{% extends "base.html" %}{% block title %}Minha senha{% endblock %}
+{% block content %}
+<div class="page-head"><div><p class="eyebrow">CONTA</p><h1>Trocar minha senha</h1><p>A nova senha vale no painel e no PDV instalado.</p></div></div>
+<section class="panel" style="max-width:520px"><form method="post">{% csrf_token %}{{ form.as_p }}<button class="primary">Salvar nova senha</button></form></section>
+{% endblock %}

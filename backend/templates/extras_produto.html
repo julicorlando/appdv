@@ -1,0 +1,8 @@
+{% extends "base.html" %}{% block title %}Editar {{ produto.codigo }} · {{ empresa.nome }}{% endblock %}
+{% block content %}
+<div class="page-head"><div><p class="eyebrow">PRODUTOS · {{ empresa.nome }}</p><h1>{{ produto.codigo }} — {{ produto.nome }}</h1><p>Preço atual cobrado: <b>R$ {{ produto.preco_atual|floatformat:2 }}</b>{% if produto.promocao_ativa %} (promoção vigente){% endif %} · Saldo {{ produto.estoque_atual|floatformat:3 }} {{ produto.unidade_estoque|default:produto.unidade }}</p></div><nav class="nav-links"><a class="secondary" href="{% url 'empresa-etiquetas' empresa.id %}?p={{ produto.pk }}">Imprimir etiqueta</a><a class="secondary" href="{% url 'empresa-produtos' empresa.id %}">Voltar</a></nav></div>
+<div class="grid two align-start">
+<section class="panel"><form method="post" enctype="multipart/form-data">{% csrf_token %}{{ form.as_p }}<button class="primary" type="submit">Salvar alterações</button></form></section>
+<section class="panel"><h2>Como as mudanças chegam ao caixa</h2><p>O PDV instalado e o caixa web recebem o novo preço ao atualizar o catálogo. Uma venda feita com preço antigo é recusada com aviso para atualizar.</p><p>O saldo de estoque não é editado aqui: use entrada, perda, inventário ou importação da planilha, para manter o histórico.</p>{% if produto.foto %}<h3>Foto</h3><img src="{{ produto.foto.url }}" alt="{{ produto.nome }}" style="max-width:240px;max-height:240px;object-fit:contain">{% endif %}{% if barcode_svg %}<h3>Código de barras</h3><div style="max-width:260px">{{ barcode_svg|safe }}</div>{% endif %}<h3>Dados fiscais</h3><p class="hint">NCM, CFOP, CSOSN/CST e origem vão para a NFC-e. Confirme os códigos com o contador antes de emitir em produção.</p></section>
+</div>
+{% endblock %}

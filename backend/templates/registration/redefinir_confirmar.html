@@ -1,0 +1,1 @@
+{% extends "base.html" %}{% block content %}<section class="panel" style="max-width:520px"><h1>Nova senha</h1>{% if validlink %}<form method="post">{% csrf_token %}{{ form.as_p }}<button class="primary">Salvar nova senha</button></form>{% else %}<p>Este link é inválido ou já foi usado. Peça um novo.</p>{% endif %}</section>{% endblock %}
