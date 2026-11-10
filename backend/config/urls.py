@@ -8,6 +8,8 @@ from core.api import (
     MinhasEmpresasView, PedidosWebView, FinalizarPedidoWebView, ProdutoViewSet, VendaViewSet,
 )
 from core.api import ClienteCPFView, OrcamentosView, AutorizarDescontoView, TerminalHeartbeatView, DescartarVendaOfflineView, LoginView
+from core.api import AlterarSenhaView, PixCobrancaDetalheView, PixCobrancaView, PixWebhookView, VersaoPdvView
+from core import extras_web as extras
 from core.desktop_sessions import DesktopSessionView, iniciar_sessao_desktop
 from core import management_web as management
 from core import web
@@ -39,11 +41,25 @@ urlpatterns = [
     path("empresa/<int:empresa_id>/devolucoes/",management.devolucoes,name="gestao-devolucoes"),
     path("empresa/<int:empresa_id>/caixas/",management.caixas,name="gestao-caixas"),
     path("empresa/<int:empresa_id>/caixas/<int:pk>/",management.caixas,name="gestao-caixa"),
+    path("empresa/<int:empresa_id>/caixas/<int:pk>/fechar/",extras.caixa_fechar,name="gestao-caixa-fechar"),
+    path("empresa/<int:empresa_id>/produtos/<int:pk>/editar/",extras.produto_editar,name="empresa-produto-editar"),
+    path("empresa/<int:empresa_id>/produtos/teste/inativar/",extras.produtos_demo_inativar,name="empresa-produtos-demo"),
+    path("empresa/<int:empresa_id>/etiquetas/",extras.etiquetas,name="empresa-etiquetas"),
+    path("empresa/<int:empresa_id>/fornecedores/",extras.fornecedores,name="empresa-fornecedores"),
+    path("empresa/<int:empresa_id>/contas-pagar/nova/",extras.conta_pagar_nova,name="empresa-conta-pagar-nova"),
+    path("empresa/<int:empresa_id>/clientes/<int:pk>/extrato/",extras.cliente_extrato,name="empresa-cliente-extrato"),
+    path("empresa/<int:empresa_id>/relatorios/gerenciais/",extras.relatorios_gerenciais,name="empresa-relatorios-gerenciais"),
+    path("empresa/<int:empresa_id>/equipe/senha/",extras.equipe_redefinir_senha,name="gestao-equipe-senha"),
+    path("conta/senha/",extras.minha_senha,name="minha-senha"),
+    path("accounts/senha/esqueci/",extras.redefinir_senha,name="redefinir-senha"),
+    path("accounts/senha/enviado/",auth_views.PasswordResetDoneView.as_view(template_name="registration/redefinir_enviado.html"),name="redefinir-senha-enviado"),
+    path("accounts/senha/nova/<uidb64>/<token>/",auth_views.PasswordResetConfirmView.as_view(template_name="registration/redefinir_confirmar.html",success_url="/accounts/senha/concluido/"),name="redefinir-senha-confirmar"),
+    path("accounts/senha/concluido/",auth_views.PasswordResetCompleteView.as_view(template_name="registration/redefinir_concluido.html"),name="redefinir-senha-concluido"),
     path("empresa/<int:empresa_id>/sincronizacao/",management.sincronizacao,name="gestao-sincronizacao"),
     path("empresa/<int:empresa_id>/descontos/",management.descontos,name="gestao-descontos"),
     path("empresa/<int:empresa_id>/relatorios/",management.relatorios,name="gestao-relatorios"),
     path("empresa/<int:empresa_id>/reposicao/",management.reposicao,name="gestao-reposicao"),
-    path("empresa/<int:empresa_id>/fiscal/",management.fiscal,name="gestao-fiscal"),
+    path("empresa/<int:empresa_id>/fiscal/",extras.fiscal,name="gestao-fiscal"),
     path("empresa/<int:empresa_id>/", web.empresa_dashboard, name="empresa-dashboard"),
     path("empresa/<int:empresa_id>/caixa/", web.caixa_web, name="caixa-web"),
     path("empresa/<int:empresa_id>/produtos/", web.empresa_produtos, name="empresa-produtos"),
@@ -60,6 +76,7 @@ urlpatterns = [
     path("empresa/<int:empresa_id>/pedidos-web/", web.empresa_pedidos_web, name="empresa-pedidos-web"),
     path("pedido/<uuid:codigo>/", web.pedido_publico, name="pedido-publico"),
     path("media/empresas/logos/<path:path>", web.logo_empresa, name="logo-empresa"),
+    path("media/produtos/fotos/<path:path>", web.logo_empresa, {"pasta": "produtos/fotos"}, name="foto-produto"),
     path("empresa/<int:empresa_id>/categorias/criar/", web.empresa_categoria, name="empresa-categoria"),
     path("empresa/<int:empresa_id>/produtos/<int:produto_id>/entrada/", web.empresa_entrada_estoque, name="empresa-entrada-estoque"),
     path("empresa/<int:empresa_id>/produtos/<int:produto_id>/perda/", web.empresa_baixa_perda, name="empresa-baixa-perda"),
@@ -72,6 +89,11 @@ urlpatterns = [
     path("api/v1/empresa/", EmpresaInfoView.as_view(), name="empresa-info"),
     path("api/v1/empresa/resumo/", DashboardEmpresaAPIView.as_view(), name="empresa-resumo"),
     path("api/v1/terminais/heartbeat/", TerminalHeartbeatView.as_view()),
+    path("api/v1/pdv/versao/", VersaoPdvView.as_view(), name="pdv-versao"),
+    path("api/v1/conta/senha/", AlterarSenhaView.as_view(), name="api-senha"),
+    path("api/v1/pix/cobrancas/", PixCobrancaView.as_view(), name="pix-cobrancas"),
+    path("api/v1/pix/cobrancas/<int:cobranca_id>/", PixCobrancaDetalheView.as_view(), name="pix-cobranca"),
+    path("api/v1/pix/webhook/<int:empresa_id>/", PixWebhookView.as_view(), name="pix-webhook"),
     path("api/v1/descontos/autorizar/", AutorizarDescontoView.as_view(), name="desconto-autorizar"),
     path("api/v1/clientes/cpf/", ClienteCPFView.as_view(), name="cliente-cpf"),
     path("api/v1/orcamentos/", OrcamentosView.as_view(), name="orcamentos"),
