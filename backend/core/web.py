@@ -51,7 +51,37 @@ def master_dashboard(request):
         "empresas_ativas": Empresa.objects.filter(ativa=True).count(),
         "total_usuarios": User.objects.filter(is_active=True).count(),
         "form": EmpresaForm(),
+        "pdv": downloads_pdv(),
     })
+
+
+def downloads_pdv():
+    """Links do PDV para Windows (Releases do GitHub) e situação dos terminais conectados."""
+    import os
+    from .api import _versoes_pdv
+    from .models import TerminalPDV
+    base = os.getenv("PDV_RELEASES_URL", "https://github.com/julicorlando/appdv/releases/latest").rstrip("/")
+    versoes = _versoes_pdv()
+    terminais = list(TerminalPDV.objects.select_related("empresa").order_by("empresa__nome", "identificador")[:200])
+    minima = _tupla_versao(versoes["versao_minima"])
+    for terminal in terminais:
+        terminal.desatualizado = _tupla_versao(terminal.versao) < minima
+    return {
+        **versoes,
+        "instalador_url": os.getenv("PDV_INSTALADOR_URL", f"{base}/download/ApPdv-Setup.exe"),
+        "portatil_url": os.getenv("PDV_PORTATIL_URL", f"{base}/download/ApPdv-Portatil.zip"),
+        "releases_url": base,
+        "terminais": terminais,
+        "desatualizados": sum(1 for t in terminais if t.desatualizado),
+    }
+
+
+def _tupla_versao(valor):
+    partes = []
+    for parte in str(valor or "0").split(".")[:3]:
+        digitos = "".join(ch for ch in parte if ch.isdigit())
+        partes.append(int(digitos) if digitos else 0)
+    return tuple(partes + [0] * (3 - len(partes)))
 
 
 @login_required
