@@ -64,6 +64,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "core.desktop_sessions.DesktopTenantMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
+    "core.cobranca_web.AssinaturaMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 ROOT_URLCONF = "config.urls"
@@ -75,6 +76,7 @@ TEMPLATES = [{
         "django.template.context_processors.request",
         "django.contrib.auth.context_processors.auth",
         "django.contrib.messages.context_processors.messages",
+        "core.cobranca_web.contexto",
     ]},
 }]
 WSGI_APPLICATION = "config.wsgi.application"
