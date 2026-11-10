@@ -61,6 +61,9 @@ class EmpresaInfoView(TenantAPIView):
             "id": empresa.pk, **empresa.dados_documento(),
             "endereco_documento": empresa.endereco_documento,
             "logo_data_url": logo_data_url,
+            "pix_configurado": bool(empresa.mp_access_token),
+            "nfce_configurada": bool(empresa.focus_token),
+            "nfce_automatica": bool(empresa.focus_token and empresa.nfce_automatica),
         })
 
 
@@ -153,8 +156,23 @@ class VendaViewSet(viewsets.GenericViewSet, mixins.ListModelMixin, mixins.Retrie
             venda, criada = vender_orcamento(empresa, request.user, request.data)
         else:
             venda, criada = registrar_venda(empresa=empresa, usuario=request.user, dados=request.data)
-        data = VendaSerializer(venda).data
+        data = dict(VendaSerializer(venda).data)
+        data["nfce"] = _nfce_apos_venda(empresa, venda, criada)
         return Response(data, status=status.HTTP_201_CREATED if criada else status.HTTP_200_OK)
+
+    @action(detail=True, methods=["get", "post"], url_path="nfce")
+    def nfce(self, request, pk=None):
+        """GET consulta a NFC-e da venda; POST emite (ou reenvia após rejeição)."""
+        from . import focus_nfe
+        from .models import DocumentoFiscal
+        venda = self.get_object()
+        if request.method == "POST":
+            documento = focus_nfe.emitir(venda)
+        else:
+            documento = DocumentoFiscal.objects.filter(empresa=venda.empresa, venda=venda).first()
+            if documento and documento.estado == "PROCESSANDO":
+                documento = focus_nfe.consultar(documento)
+        return Response({"venda": venda.pk, "nfce": focus_nfe.resumo(documento), "configurado": focus_nfe.configurado(venda.empresa)})
 
     @action(detail=True, methods=["post"], url_path="cancelar")
     def cancelar(self, request, pk=None):
@@ -193,6 +211,18 @@ class VendaViewSet(viewsets.GenericViewSet, mixins.ListModelMixin, mixins.Retrie
         return Response({"venda_cancelada": VendaSerializer(original).data,
                          "nova_venda": VendaSerializer(nova).data},
                         status=status.HTTP_201_CREATED if criada else status.HTTP_200_OK)
+
+
+def _nfce_apos_venda(empresa, venda, criada):
+    """Emissão automática opcional. Falhas fiscais nunca desfazem a venda já registrada."""
+    from . import focus_nfe
+    from .models import DocumentoFiscal
+    if criada and empresa.nfce_automatica and focus_nfe.configurado(empresa):
+        try:
+            return focus_nfe.resumo(focus_nfe.emitir(venda))
+        except ValidationError as erro:
+            return {"estado": "CONFIGURAR", "estado_texto": "Não emitida", "mensagem": str(erro.detail), "danfe_url": ""}
+    return focus_nfe.resumo(DocumentoFiscal.objects.filter(empresa=empresa, venda=venda).first())
 
 
 class ClientesView(TenantAPIView):
@@ -580,7 +610,7 @@ class PedidosWebView(TenantAPIView):
             if not fator.is_finite() or fator <= 0:
                 raise ValidationError({"itens": "Fator de conversão inválido no catálogo."})
             produtos[produto.pk] = produtos.get(produto.pk, Decimal("0")) + (quantidade * fator)
-            linha_total = (produto.preco_venda * quantidade).quantize(Decimal("0.01"))
+            linha_total = (produto.preco_atual * quantidade).quantize(Decimal("0.01"))
             calculados.append((produto, quantidade, linha_total))
             subtotal += linha_total
         for produto_id, quantidade in produtos.items():
@@ -599,7 +629,7 @@ class PedidosWebView(TenantAPIView):
             ItemPedidoWeb.objects.create(
                 pedido=pedido, empresa=empresa, produto=produto,
                 nome_produto=produto.nome, codigo_produto=produto.codigo,
-                quantidade=quantidade, preco_unitario=produto.preco_venda, total=linha_total,
+                quantidade=quantidade, preco_unitario=produto.preco_atual, total=linha_total,
             )
         public_url = request.build_absolute_uri(
             reverse("pedido-publico", kwargs={"codigo": pedido.codigo_publico})
@@ -708,8 +738,8 @@ class TerminalHeartbeatView(TenantAPIView):
             count=int(request.data.get('pendentes',0))
             if not name or not 0<=count<=100000:raise ValueError
         except (ValueError,TypeError):raise ValidationError('Terminal ou quantidade inválidos.')
-        TerminalPDV.objects.update_or_create(empresa=empresa,identificador=name,defaults={'operador':request.user,'pendentes':count,'erros':str(request.data.get('erros',''))[:2000]})
-        return Response({'ok':True})
+        TerminalPDV.objects.update_or_create(empresa=empresa,identificador=name,defaults={'operador':request.user,'pendentes':count,'erros':str(request.data.get('erros',''))[:2000],'versao':str(request.data.get('versao',''))[:20]})
+        return Response({'ok':True,**_versoes_pdv()})
 
 
 def _autenticar_gerente(request, empresa):
@@ -770,3 +800,89 @@ class LoginView(TokenObtainPairView):
                     raise AuthenticationFailed('Conta desativada.')
                 return data
         return Serializer
+
+
+def _versoes_pdv():
+    import os
+    return {"versao_minima": os.getenv("PDV_VERSAO_MINIMA", "0.3.0"), "versao_atual": os.getenv("PDV_VERSAO_ATUAL", "0.3.0"),
+            "download_url": os.getenv("PDV_DOWNLOAD_URL", "")}
+
+
+class VersaoPdvView(APIView):
+    """Versão mínima e atual do PDV instalado (o aplicativo avisa quando estiver desatualizado)."""
+    permission_classes = []
+    authentication_classes = []
+
+    def get(self, request):
+        return Response(_versoes_pdv())
+
+
+class AlterarSenhaView(APIView):
+    """Troca da própria senha (PDV instalado e integrações)."""
+    throttle_classes = [AutorizacaoOperadorThrottle]
+
+    def post(self, request):
+        from django.contrib.auth.password_validation import validate_password
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        _checar_conta(request.user)
+        atual = str(request.data.get("senha_atual", ""))
+        nova = str(request.data.get("nova_senha", ""))
+        if not request.user.check_password(atual):
+            raise ValidationError({"senha_atual": "Senha atual incorreta."})
+        if nova == atual:
+            raise ValidationError({"nova_senha": "Escolha uma senha diferente da atual."})
+        try:
+            validate_password(nova, request.user)
+        except DjangoValidationError as erro:
+            raise ValidationError({"nova_senha": list(erro.messages)})
+        request.user.set_password(nova)
+        request.user.save(update_fields=["password"])
+        from .models import MembroEmpresa as _M, EventoGestao
+        for membro in _M.objects.filter(usuario=request.user, ativo=True).select_related("empresa")[:20]:
+            EventoGestao.objects.create(empresa=membro.empresa, usuario=request.user, acao="SENHA_ALTERADA", referencia=str(request.user.pk), detalhes={"origem": "api"})
+        return Response({"ok": True})
+
+
+class PixCobrancaView(TenantAPIView):
+    def post(self, request):
+        from . import pix_mp
+        empresa, membro = self.get_empresa(request)
+        webhook = request.build_absolute_uri(f"/api/v1/pix/webhook/{empresa.pk}/")
+        cobranca = pix_mp.criar(
+            empresa, request.user, request.data.get("valor"), request.data.get("chave"),
+            email_pagador=str(request.data.get("email", ""))[:254], url_notificacao=webhook,
+        )
+        return Response(pix_mp.resumo(cobranca), status=status.HTTP_201_CREATED)
+
+    def get(self, request):
+        from . import pix_mp
+        empresa, membro = self.get_empresa(request)
+        return Response({"configurado": pix_mp.configurado(empresa)})
+
+
+class PixCobrancaDetalheView(TenantAPIView):
+    def get(self, request, cobranca_id):
+        from . import pix_mp
+        from .models import CobrancaPix
+        empresa, membro = self.get_empresa(request)
+        try:
+            cobranca = CobrancaPix.objects.get(pk=cobranca_id, empresa=empresa, operador=request.user)
+        except CobrancaPix.DoesNotExist:
+            raise ValidationError({"pix": "Cobrança não encontrada."})
+        return Response(pix_mp.resumo(pix_mp.atualizar(cobranca)))
+
+
+class PixWebhookView(APIView):
+    """Aviso do Mercado Pago. O corpo não é confiável: só dispara uma consulta com o token da empresa."""
+    permission_classes = []
+    authentication_classes = []
+
+    def post(self, request, empresa_id):
+        from . import pix_mp
+        from .models import CobrancaPix
+        dados = request.data if isinstance(request.data, dict) else {}
+        pagamento_id = str((dados.get("data") or {}).get("id") or request.query_params.get("data.id") or request.query_params.get("id") or "")[:40]
+        if pagamento_id.isdigit():
+            for cobranca in CobrancaPix.objects.filter(empresa_id=empresa_id, provedor_id=pagamento_id, estado=CobrancaPix.Estado.PENDENTE)[:1]:
+                pix_mp.atualizar(cobranca)
+        return Response({"ok": True})
