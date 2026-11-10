@@ -1,0 +1,8 @@
+{% extends "base.html" %}{% block title %}Fornecedores · {{ empresa.nome }}{% endblock %}
+{% block content %}
+<div class="page-head"><div><p class="eyebrow">COMPRAS E FINANCEIRO</p><h1>Fornecedores</h1><p>Fornecedores também são criados automaticamente ao importar o XML de uma NF-e.</p></div><nav class="nav-links"><a class="secondary" href="{% url 'empresa-contas-pagar' empresa.id %}">Contas a pagar</a><a class="secondary" href="{% url 'empresa-dashboard' empresa.id %}">Painel</a></nav></div>
+<div class="grid two align-start">
+<section class="panel"><h2>{% if editando %}Editar {{ editando.nome }}{% else %}Novo fornecedor{% endif %}</h2><form method="post">{% csrf_token %}{{ form.as_p }}<button class="primary">Salvar</button>{% if editando %} <a href="{% url 'empresa-fornecedores' empresa.id %}">Cancelar</a>{% endif %}</form></section>
+<section class="panel table-wrap"><table><thead><tr><th>Fornecedor</th><th>CNPJ</th><th>Contato</th><th>Em aberto</th><th></th></tr></thead><tbody>{% for f in fornecedores %}<tr><td>{{ f.nome }}{% if not f.ativo %} <small>(inativo)</small>{% endif %}</td><td>{{ f.cnpj|default:"—" }}</td><td>{{ f.telefone }} {{ f.email }}</td><td>R$ {{ f.em_aberto|default:0|floatformat:2 }}</td><td><a href="?editar={{ f.pk }}">Editar</a></td></tr>{% empty %}<tr><td colspan="5">Nenhum fornecedor cadastrado.</td></tr>{% endfor %}</tbody></table></section>
+</div>
+{% endblock %}
