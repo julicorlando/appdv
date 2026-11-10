@@ -44,15 +44,25 @@ jobs:
         run: |
           choco install innosetup --no-progress -y
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVer=${{ steps.versao.outputs.valor }}" installer\ApPdv.iss
+      - name: Nomes fixos e versão portátil
+        shell: pwsh
+        # Nomes sem versão para o link "releases/latest/download/..." do Painel Master nunca mudar.
+        run: |
+          Copy-Item "dist\installer\ApPdv-Setup-${{ steps.versao.outputs.valor }}.exe" "dist\installer\ApPdv-Setup.exe"
+          Compress-Archive -Path "dist\ApPdv\*" -DestinationPath "dist\installer\ApPdv-Portatil.zip"
       - uses: actions/upload-artifact@v4
         with:
           name: ApPdv-Setup-${{ steps.versao.outputs.valor }}
-          path: pdv/dist/installer/*.exe
+          path: |
+            pdv/dist/installer/*.exe
+            pdv/dist/installer/*.zip
           retention-days: 30
       - name: Publicar na Release
         if: startsWith(github.ref, 'refs/tags/pdv-v')
         uses: softprops/action-gh-release@v2
         with:
-          files: pdv/dist/installer/*.exe
+          files: |
+            pdv/dist/installer/*.exe
+            pdv/dist/installer/*.zip
           name: ApPdv ${{ steps.versao.outputs.valor }}
-          body: Instalador do PDV para Windows. Baixe, execute e mantenha o endereço do servidor com https://.
+          body: "PDV para Windows. ApPdv-Setup.exe instala no computador; ApPdv-Portatil.zip roda sem instalar (extraia e abra ApPdv.exe). Informe o endereço do servidor com https://."
