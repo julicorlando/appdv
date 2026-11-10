@@ -9,6 +9,10 @@ let receipt = "";
 let locked = false;
 let discountCents = 0;
 const discountPolicy = JSON.parse(document.getElementById("pos-discount-policy").textContent);
+const integracoes = JSON.parse((document.getElementById("pos-integracoes") || {textContent: "{}"}).textContent || "{}");
+let pix = null;          // cobrança PIX dinâmica da venda em andamento
+let pixTimer = null;
+let lastSale = null;
 
 async function api(path, body) {
     const response = await fetch("/api/v1/" + path, {
@@ -212,6 +216,45 @@ function updatePaymentDiscount() {
     field("due").textContent = "Subtotal: " + money(gross/100) + " · Total a pagar: " + money(total());
 }
 field("payment-form").oninput = updatePaymentDiscount;
+
+function resetPix() {
+    if (pixTimer) clearTimeout(pixTimer);
+    pix = null; pixTimer = null;
+    if (!field("pix-qr")) return;
+    field("pix-qr").hidden = true; field("pix-copia").hidden = true; field("pix-status").textContent = "";
+}
+async function pollPix() {
+    if (!pix || pix.estado !== "PENDENTE") return;
+    try { pix = await api("pix/cobrancas/" + pix.id + "/"); } catch (error) { field("pix-status").textContent = error.message; }
+    field("pix-status").textContent = pix.estado === "APROVADO" ? "PIX recebido ✓ — confirme a venda." : (pix.estado === "PENDENTE" ? "Aguardando pagamento…" : "Cobrança " + pix.estado_texto.toLowerCase() + ". Gere outro QR Code.");
+    if (pix.estado === "PENDENTE") pixTimer = setTimeout(pollPix, 3000);
+}
+if (field("pix-gerar")) field("pix-gerar").onclick = run(async () => {
+    const valor = Number(new FormData(field("payment-form")).get("PIX"));
+    if (!(valor > 0)) throw new Error("Informe o valor no campo Pix antes de gerar o QR Code.");
+    resetPix();
+    pix = await api("pix/cobrancas/", {valor: valor.toFixed(2), chave: crypto.randomUUID()});
+    field("pix-qr").src = "data:image/png;base64," + pix.qr_base64;
+    field("pix-qr").hidden = !pix.qr_base64;
+    field("pix-copia").value = pix.qr_code;
+    field("pix-copia").hidden = !pix.qr_code;
+    field("pix-status").textContent = "Aguardando pagamento…";
+    pixTimer = setTimeout(pollPix, 3000);
+});
+function showNfce(nfce) {
+    if (!field("nfce")) return;
+    field("nfce").hidden = !integracoes.nfce;
+    field("nfce-status").textContent = nfce ? nfce.estado_texto + (nfce.mensagem ? " · " + nfce.mensagem : "") : "";
+    field("nfce-emitir").hidden = Boolean(nfce && ["AUTORIZADO", "PROCESSANDO", "CANCELADO"].includes(nfce.estado));
+    field("nfce-danfe").hidden = !(nfce && nfce.danfe_url);
+    if (nfce && nfce.danfe_url) field("nfce-danfe").href = nfce.danfe_url;
+}
+if (field("nfce-emitir")) field("nfce-emitir").onclick = run(async () => {
+    if (!lastSale) return;
+    field("nfce-status").textContent = "Enviando para a SEFAZ…";
+    const data = await api("vendas/" + lastSale + "/nfce/", {});
+    showNfce(data.nfce);
+});
 field("payment-form").onsubmit = (event) => {
     event.preventDefault();
     return run(async () => {
@@ -239,6 +282,14 @@ field("payment-form").onsubmit = (event) => {
             cashPayment.valor_recebido=(received/100).toFixed(2);
             cashPayment.troco=((received-applied)/100).toFixed(2);
         }
+        const pixPayment = payments.find(p => p.meio === "PIX");
+        if (pixPayment && integracoes.pix) {
+            if (pix && pix.estado === "APROVADO" && Number(pix.valor).toFixed(2) === Number(pixPayment.valor).toFixed(2)) {
+                pixPayment.cobranca_pix = pix.id;
+            } else if (!confirm("O PIX deste valor não foi confirmado pelo QR Code. Confirmar que o valor já está na conta da loja?")) {
+                throw new Error("Gere o QR Code PIX e aguarde a confirmação, ou confira o recebimento.");
+            }
+        }
         let authorization;
         if (field("supervisor").value || field("supervisor-password").value) {
             try { authorization = (await api("descontos/autorizar/",{chave:saleKey,itens:items,usuario:field("supervisor").value,senha:field("supervisor-password").value})).codigo; }
@@ -247,6 +298,9 @@ field("payment-form").onsubmit = (event) => {
         const data = await api("vendas/", {caixa:cash,idempotency_key:saleKey,pagamentos:payments,itens:items,autorizacao_desconto:authorization});
         receipt = printable("COMPROVANTE NÃO FISCAL · VENDA #" + data.id) + "\nDesconto: " + money(discountCents/100) + "\n" + payments.map(p=>p.meio+": "+money(p.valor)+(Number(p.troco)>0 ? " · Troco: "+money(p.troco) : "")).join("\n");
         field("receipt").hidden = false;
+        lastSale = data.id;
+        showNfce(data.nfce);
+        resetPix();
         field("payment").close();
         event.target.reset();
         discountCents = 0;
