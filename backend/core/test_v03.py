@@ -399,4 +399,6 @@ class OfflineServidorTests(Base):
         self.assertEqual(self.api.get("/api/v1/clientes/", **self.h).data[0]["limite_disponivel"], "500.00")
         versao = APIClient().get("/api/v1/pdv/versao/").data
         self.assertEqual(versao["offline_dias"], 30)
+        self.assertTrue(versao["instalador_url"].endswith(f"/pdv-v{versao['versao_atual']}/ApPdv-Setup.exe"))
+        self.assertEqual(versao["sha256_url"], versao["instalador_url"] + ".sha256")
         self.assertEqual(settings.SIMPLE_JWT["REFRESH_TOKEN_LIFETIME"], timedelta(days=30))
