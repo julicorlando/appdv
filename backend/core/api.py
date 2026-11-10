@@ -376,7 +376,9 @@ def _resumo_caixa(caixa):
         "esperado_dinheiro": str(esperado),
         "sangrias": str(sangrias),
         "suprimentos": str(suprimentos),
-        "recebimentos_conta_por_meio": {meio: str(valor) for meio, valor in recebimentos.items()},
+        "recebimentos_conta_por_meio": {
+            meio: str(Decimal(valor).quantize(Decimal("0.01"))) for meio, valor in recebimentos.items()
+        },
         "pagamentos_por_meio": {
             meio: {
                 "pagamentos": str(valores["pagamentos"]),
