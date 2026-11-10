@@ -25,6 +25,7 @@ class ArmazemAPI:
             )
             if refresh.ok:
                 tokens = refresh.json()
+                self.offline_login = False
                 self.session.headers["Authorization"] = f"Bearer {tokens['access']}"
                 self.refresh_token = tokens.get("refresh", self.refresh_token)
                 response = self.session.request(method, url, timeout=self.timeout, **kwargs)
@@ -60,8 +61,10 @@ class ArmazemAPI:
         response = self._request("GET", "/api/v1/empresa/")
         return response.json()
 
-    def produtos(self):
-        response = self._request("GET", "/api/v1/produtos/")
+    def produtos(self, desde=None):
+        """Catálogo ativo; com `desde`, só o que mudou depois desse instante (inclui inativados)."""
+        params = {"desde": desde} if desde else None
+        response = self._request("GET", "/api/v1/produtos/", params=params)
         return response.json()
 
     def clientes(self):
@@ -83,11 +86,11 @@ class ArmazemAPI:
         response = self._request("GET", f"/api/v1/caixas/{caixa_id}/resumo/")
         return response.json()
 
-    def movimentar_caixa(self, caixa_id, tipo, valor, motivo):
-        response = self._request(
-            "POST", "/api/v1/caixas/movimentacoes/",
-            json={"caixa": caixa_id, "tipo": tipo, "valor": str(valor), "motivo": motivo},
-        )
+    def movimentar_caixa(self, caixa_id, tipo, valor, motivo, chave=None):
+        corpo = {"caixa": caixa_id, "tipo": tipo, "valor": str(valor), "motivo": motivo}
+        if chave:
+            corpo["chave"] = chave
+        response = self._request("POST", "/api/v1/caixas/movimentacoes/", json=corpo)
         return response.json()
 
     def fechar_caixa(self, caixa_id, saldo_fechamento):
