@@ -6,6 +6,7 @@ No passwords or API tokens are inserted into a URL or persisted in the renderer.
 from pathlib import Path
 from urllib.parse import urlencode
 from PySide6.QtCore import QUrl, Qt, QThread, Signal
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QLabel,QPushButton,
     QListWidget,QListWidgetItem,QFileDialog,QMessageBox,QSplitter)
 from PySide6.QtWebEngineCore import QWebEnginePage,QWebEngineProfile,QWebEngineHttpRequest,QWebEngineUrlRequestInterceptor,QWebEngineSettings
@@ -18,14 +19,25 @@ MODULES = [
     ('Clientes','clientes','clientes/'),('Orçamentos','orcamentos','orcamentos/'),
     ('Separação e entregas','entregas','entregas/'),('Depósitos e transferências','depositos','depositos/'),
     ('Trocas e devoluções','devolucoes','devolucoes/'),('Vendas','vendas','vendas/'),
+    ('Etiquetas de preço','etiquetas','etiquetas/'),('Fornecedores','fornecedores','fornecedores/'),
     ('Compras e NF-e de entrada','compras','compras/'),('Reposição e pedidos de compra','reposicao','reposicao/'),
     ('Inventário','inventario','inventario/'),('Conferência de caixas','caixas','caixas/'),
     ('Contas a receber','contas-receber','contas-receber/'),('Contas a pagar','contas-pagar','contas-pagar/'),
-    ('Margens e resultados','relatorios','relatorios/'),('Sincronização','sincronizacao','sincronizacao/'),
+    ('Margens e resultados','relatorios','relatorios/'),('Relatórios gerenciais','relatorios-gerenciais','relatorios/gerenciais/'),
+    ('Sincronização','sincronizacao','sincronizacao/'),
     ('Autorizações','autorizacoes','autorizacoes/'),('Pedidos confirmados','pedidos-web','pedidos-web/'),
     ('Dados da empresa e logo','configuracao','configuracao/'),('Central fiscal','fiscal','fiscal/'),
     ('Políticas de desconto','descontos','descontos/'),('Equipe e permissões','equipe','equipe/'),
 ]
+
+
+# Documentos fiscais (DANFE/XML) ficam no provedor e abrem no navegador do sistema.
+EXTERNAL_DOCUMENT_HOSTS = ('api.focusnfe.com.br', 'homologacao.focusnfe.com.br')
+
+
+def external_document(value):
+    url = QUrl(value)
+    return url.scheme() == 'https' and url.host() in EXTERNAL_DOCUMENT_HOSTS and not url.userInfo()
 
 
 def same_origin(value, base):
@@ -63,6 +75,10 @@ class EmbeddedPage(QWebEnginePage):
         super().__init__(profile,parent);self.base=base;self.empresa_id=empresa_id;self.local_file=local_file;self.popup=popup
     def acceptNavigationRequest(self,url,kind,is_main_frame):
         if navigation_allowed(url.toString(),self.base,self.empresa_id,self.local_file):return True
+        if self.local_file is None and external_document(url.toString()):
+            QDesktopServices.openUrl(url)
+            self.blocked.emit('Documento fiscal aberto no navegador do computador.')
+            return False
         self.blocked.emit('Navegação externa bloqueada. Use os módulos do aplicativo ou Reconectar para renovar a sessão.')
         return False
     def createWindow(self,kind):
