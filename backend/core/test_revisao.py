@@ -143,7 +143,7 @@ class RecebimentoNoCaixaTests(BaseRevisao):
     def setUp(self):
         super().setUp()
         caixa = self.abrir_caixa("pdv-venda")
-        self.venda = self.vender(caixa, [], credito="30.00")
+        self.venda = self.vender(caixa, [], credito="30.00", quantidade="3")
         self.fechar_caixa(caixa)
         self.conta = ContaReceber.objects.get(venda_id=self.venda)
 
