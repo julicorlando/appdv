@@ -835,7 +835,12 @@ class LoginView(TokenObtainPairView):
 def _versoes_pdv():
     import os
     from django.conf import settings as _settings
-    return {"versao_minima": os.getenv("PDV_VERSAO_MINIMA", "0.3.0"), "versao_atual": os.getenv("PDV_VERSAO_ATUAL", "0.3.2"),
+    atual = os.getenv("PDV_VERSAO_ATUAL", "0.3.3")
+    # Instalador da versão anunciada (o PDV confere o .sha256 publicado junto antes de instalar).
+    instalador = os.getenv("PDV_INSTALADOR_URL",
+                           f"https://github.com/julicorlando/appdv/releases/download/pdv-v{atual}/ApPdv-Setup.exe")
+    return {"instalador_url": instalador, "sha256_url": instalador + ".sha256",
+            "versao_minima": os.getenv("PDV_VERSAO_MINIMA", "0.3.0"), "versao_atual": atual,
             "download_url": os.getenv("PDV_DOWNLOAD_URL", ""), "offline_dias": _settings.PDV_OFFLINE_DIAS,
             "agora": timezone.now().isoformat()}
 
