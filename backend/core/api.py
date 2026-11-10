@@ -1,5 +1,6 @@
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
+import uuid
 import base64
 import mimetypes
 from django.utils import timezone
@@ -133,7 +134,18 @@ class ProdutoViewSet(TenantViewSet):
     search_fields = ("nome", "codigo", "codigo_barras")
     filter_backends = [SearchFilter]
     def get_queryset(self):
-        return Produto.objects.filter(empresa=self.get_empresa(), ativo=True).select_related("categoria").order_by("nome")
+        qs = Produto.objects.filter(empresa=self.get_empresa()).select_related("categoria").order_by("nome")
+        desde = self.request.query_params.get("desde") if self.request else None
+        if desde:
+            # Sincronização incremental do PDV: só o que mudou, incluindo inativados (para sair do caixa).
+            from django.utils.dateparse import parse_datetime
+            momento = parse_datetime(desde.replace(" ", "+"))
+            if momento is None:
+                raise ValidationError({"desde": "Data inválida (use ISO 8601)."})
+            if timezone.is_naive(momento):
+                momento = timezone.make_aware(momento)
+            return qs.filter(atualizado_em__gt=momento)
+        return qs.filter(ativo=True)
 
 
 class VendaViewSet(viewsets.GenericViewSet, mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.CreateModelMixin):
@@ -229,11 +241,13 @@ class ClientesView(TenantAPIView):
     def get(self, request):
         empresa, membro = self.get_empresa(request)
         from .models import Cliente
+        from .orcamentos import limite_disponivel
         clientes = Cliente.objects.filter(empresa=empresa, ativo=True).order_by("nome")[:500]
         return Response([{
             "id": c.pk, "nome": c.nome, "documento": c.documento,
             "telefone": c.telefone, "email": c.email,
             "limite_credito": str(c.limite_credito),
+            "limite_disponivel": str(limite_disponivel(c)),
         } for c in clientes])
 
     def post(self, request):
@@ -458,6 +472,20 @@ class MovimentacaoCaixaView(TenantAPIView):
     @transaction.atomic
     def post(self, request):
         empresa, membro = self.get_empresa(request)
+        chave = request.data.get("chave")
+        if chave:
+            # Reenvio do PDV offline: a mesma chave nunca gera uma segunda sangria/suprimento.
+            try:
+                chave = uuid.UUID(str(chave))
+            except ValueError:
+                raise ValidationError({"chave": "Chave inválida."})
+            existente = MovimentacaoCaixa.objects.filter(empresa=empresa, chave=chave).select_related("caixa").first()
+            if existente:
+                if existente.operador_id != request.user.pk:
+                    raise ValidationError({"chave": "Chave já usada."})
+                return Response({"id": existente.pk, "tipo": existente.tipo, "valor": str(existente.valor),
+                                 "motivo": existente.motivo, "criado_em": existente.criado_em,
+                                 "resumo": _resumo_caixa(existente.caixa)})
         try:
             caixa = Caixa.objects.select_for_update().get(
                 pk=request.data.get("caixa"), empresa=empresa,
@@ -474,7 +502,7 @@ class MovimentacaoCaixaView(TenantAPIView):
             raise ValidationError({"movimentacao": "Informe tipo, valor positivo e motivo."})
         movimento = MovimentacaoCaixa.objects.create(
             empresa=empresa, caixa=caixa, operador=request.user,
-            tipo=tipo, valor=valor, motivo=motivo,
+            tipo=tipo, valor=valor, motivo=motivo, chave=chave or None,
         )
         return Response({
             "id": movimento.pk, "tipo": movimento.tipo, "valor": str(movimento.valor),
@@ -497,11 +525,13 @@ class FecharCaixaView(TenantAPIView):
             raise ValidationError({"saldo_fechamento": "Informe um saldo válido."})
         with transaction.atomic():
             try:
-                caixa = Caixa.objects.select_for_update().get(
-                    pk=caixa_id, empresa=empresa, operador=request.user, estado=Caixa.Estado.ABERTO
-                )
+                caixa = Caixa.objects.select_for_update().get(pk=caixa_id, empresa=empresa, operador=request.user)
             except Caixa.DoesNotExist:
                 raise ValidationError({"caixa": "Caixa aberto não encontrado."})
+            if caixa.estado == Caixa.Estado.FECHADO:
+                # Reenvio do fechamento feito offline (ou já fechado pela gerência): devolve o que já vale.
+                return Response({"id": caixa.pk, "estado": caixa.estado, "fechado_em": caixa.fechado_em,
+                                 "ja_fechado": True, "resumo": _resumo_caixa(caixa)})
             resumo = _resumo_caixa(caixa)
             esperado = Decimal(resumo["esperado_dinheiro"])
             caixa.saldo_informado_fechamento = informado
@@ -804,8 +834,10 @@ class LoginView(TokenObtainPairView):
 
 def _versoes_pdv():
     import os
-    return {"versao_minima": os.getenv("PDV_VERSAO_MINIMA", "0.3.0"), "versao_atual": os.getenv("PDV_VERSAO_ATUAL", "0.3.0"),
-            "download_url": os.getenv("PDV_DOWNLOAD_URL", "")}
+    from django.conf import settings as _settings
+    return {"versao_minima": os.getenv("PDV_VERSAO_MINIMA", "0.3.0"), "versao_atual": os.getenv("PDV_VERSAO_ATUAL", "0.3.1"),
+            "download_url": os.getenv("PDV_DOWNLOAD_URL", ""), "offline_dias": _settings.PDV_OFFLINE_DIAS,
+            "agora": timezone.now().isoformat()}
 
 
 class VersaoPdvView(APIView):
