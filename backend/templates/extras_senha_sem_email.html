@@ -1,0 +1,4 @@
+{% extends "base.html" %}{% block title %}Esqueci minha senha{% endblock %}
+{% block content %}
+<section class="panel" style="max-width:560px"><h1>Esqueci minha senha</h1><p>O envio de e-mail ainda não foi configurado neste servidor. Peça ao administrador da sua empresa para definir uma senha provisória em <b>Administração › Equipe e permissões</b>. Depois de entrar, troque-a em <b>Minha senha</b>.</p><a href="{% url 'login' %}">Voltar ao login</a></section>
+{% endblock %}
