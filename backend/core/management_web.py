@@ -187,7 +187,9 @@ def devolucoes(request,empresa_id):
         try:
             result=devolver(m.empresa,request.user,request.POST.get('item'),request.POST.get('quantidade'),request.POST.get('destino'),request.POST.get('financeiro'),request.POST.get('motivo',''),uuid.UUID(request.POST.get('chave','')),request.POST.get('meio','OUTRO'))
             messages.success(request,f'Devolução #{result.pk}: {money(result.valor)}. Estorno registra a obrigação; confirme a devolução do pagamento com o cliente.')
-        except Exception as exc:messages.error(request,str(exc))
+        except Exception as exc:
+            from .access import mensagem_erro
+            messages.error(request,mensagem_erro(exc))
         return redirect('gestao-devolucoes',empresa_id=empresa_id)
     sale_id=request.GET.get('venda','')
     items=ItemVenda.objects.filter(empresa=m.empresa,venda__estado='CONCLUIDA').select_related('produto','venda__cliente')
@@ -208,7 +210,8 @@ def caixas(request,empresa_id,pk=None):
         rows.append(dict(cells=[c.pk,c.operador.username,c.aberto_em,c.estado,money(c.saldo_abertura),summary['esperado_dinheiro'],c.saldo_informado_fechamento,c.diferenca_fechamento],url=reverse('gestao-caixa',args=[empresa_id,c.pk])))
         if pk:
             details=list(MovimentacaoCaixa.objects.filter(empresa=m.empresa,caixa=c).values('tipo','valor','motivo'))
-            details+=list(Transacao.objects.filter(empresa=m.empresa,venda__caixa=c).values('venda_id','tipo','meio','valor','troco'))
+            details+=list(Transacao.objects.filter(empresa=m.empresa,caixa=c).values('venda_id','tipo','meio','valor','troco'))
+            details+=list(RecebimentoConta.objects.filter(empresa=m.empresa,caixa=c).values('conta_id','meio','valor','referencia'))
     return screen(request,m,'Conferência de caixas',['Caixa','Operador','Abertura','Estado','Fundo','Dinheiro esperado','Contagem','Diferença'],rows,details=details)
 
 

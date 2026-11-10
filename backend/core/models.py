@@ -197,6 +197,9 @@ class Transacao(models.Model):
         LOJA = "LOJA", "Crédito em loja"
     empresa = models.ForeignKey(Empresa, on_delete=models.CASCADE, related_name="transacoes")
     venda = models.ForeignKey(Venda, on_delete=models.PROTECT, related_name="transacoes")
+    # Caixa em que o dinheiro entrou ou saiu. Um estorno feito hoje pertence ao
+    # caixa de hoje, mesmo que a venda tenha sido registrada em outro caixa.
+    caixa = models.ForeignKey(Caixa, null=True, blank=True, on_delete=models.PROTECT, related_name="transacoes")
     tipo = models.CharField(max_length=10, choices=Tipo.choices, default=Tipo.PAGAMENTO)
     meio = models.CharField(max_length=10, choices=Meio.choices)
     valor = models.DecimalField(max_digits=12, decimal_places=2)
@@ -498,6 +501,7 @@ class RecebimentoConta(models.Model):
     conta = models.ForeignKey(ContaReceber, on_delete=models.PROTECT, related_name="recebimentos")
     empresa = models.ForeignKey(Empresa, on_delete=models.CASCADE, related_name="recebimentos_contas")
     operador = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    caixa = models.ForeignKey(Caixa, null=True, blank=True, on_delete=models.PROTECT, related_name="recebimentos_conta")
     meio = models.CharField(max_length=10, choices=Transacao.Meio.choices)
     valor = models.DecimalField(max_digits=12, decimal_places=2)
     referencia = models.CharField(max_length=120, blank=True)

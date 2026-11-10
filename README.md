@@ -35,9 +35,12 @@ cd ..
 docker compose up -d db
 cd backend
 python manage.py migrate
+python manage.py createcachetable
 python manage.py createsuperuser
 python manage.py runserver
 ```
+
+O `docker-compose.yml` exige `POSTGRES_DB`, `POSTGRES_USER` e `POSTGRES_PASSWORD`: copie também `.env.example` (na raiz) para `.env` e use os mesmos valores do `DATABASE_URL` de `backend/.env`. Com PostgreSQL, o cache compartilhado (limites de tentativa de login) fica na tabela criada por `createcachetable`; o entrypoint do container já executa esse comando.
 
 Para executar também o backend em container, copie primeiro `backend/.env.example` para `backend/.env`, ajuste `SECRET_KEY` e execute `docker compose up --build`. No container, o Compose aponta o backend para o serviço PostgreSQL `db`.
 
@@ -72,8 +75,20 @@ As operações protegidas exigem conexão com o servidor. Vendas que falham por 
 - `POST /api/v1/pedidos-web/{id}/finalizar/`
 - Página pública de confirmação: `/pedido/{uuid}/`
 - `POST /api/v1/vendas/{id}/cancelar/`, `/estornar/` e `/trocar/`
+- `POST /api/v1/vendas-offline/descartar/` (exige usuário e senha de gerente/administrador)
 
 Todas as chamadas de negócio exigem JWT e `X-Empresa-ID`.
+
+## Segurança em produção
+
+Com `DEBUG=False` o backend não inicia sem `SECRET_KEY` própria, redireciona para HTTPS, marca os cookies como seguros e envia HSTS (30 dias; ajuste com `SECURE_HSTS_SECONDS`). Configure o endereço do servidor no PDV com `https://`. Login (API e painel) e senhas de gerente digitadas no PDV têm limite de tentativas por usuário e por IP (`THROTTLE_*`, `NUM_PROXIES`). Somente os logos das empresas (`/media/empresas/logos/`) são servidos publicamente; XML e DANFE fiscais continuam sem acesso público.
+
+## Caixa, estornos e vendas offline
+
+- Estornos (cancelamento, troca, devolução) entram no caixa de quem executa a operação. Estorno em dinheiro exige caixa aberto.
+- Recebimentos de contas a receber em dinheiro exigem caixa aberto e entram no dinheiro esperado do fechamento.
+- Cancelar uma venda a prazo cancela a conta a receber e estorna as parcelas já recebidas.
+- Vendas offline recusadas pelo servidor ficam em **Sincronização** no PDV: reenvie após corrigir a causa ou descarte com usuário e senha de gerente. O descarte fica registrado na auditoria (`VENDA_OFFLINE_DESCARTADA`) com itens, pagamentos e motivo.
 
 Nunca comite segredos, tokens ou credenciais de produção. Antes de publicar, configure `SECRET_KEY`, `DEBUG=False`, `ALLOWED_HOSTS`, PostgreSQL, HTTPS e armazenamento de backups.
 

@@ -195,7 +195,7 @@ def registrar_venda(*, empresa, usuario, dados, frete=Decimal("0.00")):
         )
     for meio, valor, recebido, troco, referencia in valores_pagamento:
         Transacao.objects.create(
-            empresa=empresa, venda=venda, meio=meio, valor=valor,
+            empresa=empresa, venda=venda, caixa=caixa, meio=meio, valor=valor,
             valor_recebido=recebido, troco=troco,
             referencia_externa=referencia[:120],
         )
@@ -237,6 +237,16 @@ def cancelar_venda(*, empresa, usuario, venda_id, codigo,
         raise ValidationError('Venda com devolução parcial: trate os itens restantes pela central de devoluções.')
     if OrdemEntrega.objects.filter(empresa=empresa,venda=venda,itens__entregue__gt=0).exists():
         raise ValidationError('Venda com entrega registrada: utilize devolução por item.')
+    from .access import caixa_para_movimento
+    from .models import RecebimentoConta
+    conta = ContaReceber.objects.select_for_update().filter(empresa=empresa, venda=venda).first()
+    recebimentos = list(RecebimentoConta.objects.filter(conta=conta)) if conta else []
+    pagamentos = list(venda.transacoes.filter(tipo=Transacao.Tipo.PAGAMENTO))
+    # O dinheiro devolvido sai do caixa de quem cancela, não do caixa original da venda.
+    caixa_estorno = caixa_para_movimento(
+        empresa, usuario, [p.meio for p in pagamentos] + [r.meio for r in recebimentos],
+        operacao="estornar pagamentos em dinheiro",
+    )
     OrdemEntrega.objects.filter(empresa=empresa,venda=venda).update(estado='CANCELADO')
     from .models import CreditoLoja
     for debit in CreditoLoja.objects.filter(empresa=empresa,venda=venda,valor__lt=0):
@@ -262,10 +272,21 @@ def cancelar_venda(*, empresa, usuario, venda_id, codigo,
             quantidade=(item.quantidade * item.fator_conversao).quantize(Decimal("0.001")), referencia=f"Estorno da venda #{venda.pk}",
             operador=usuario,
         )
-    for pagamento in venda.transacoes.filter(tipo=Transacao.Tipo.PAGAMENTO):
+    for pagamento in pagamentos:
         Transacao.objects.create(
-            empresa=empresa, venda=venda, tipo=Transacao.Tipo.ESTORNO,
+            empresa=empresa, venda=venda, caixa=caixa_estorno, tipo=Transacao.Tipo.ESTORNO,
             meio=pagamento.meio, valor=pagamento.valor,
             referencia_externa=f"Estorno da venda #{venda.pk}"[:120],
         )
+    if conta and conta.estado != ContaReceber.Estado.CANCELADA:
+        # Parcelas já pagas pelo cliente são devolvidas; o saldo restante deixa de ser cobrado.
+        for recebimento in recebimentos:
+            Transacao.objects.create(
+                empresa=empresa, venda=venda, caixa=caixa_estorno, tipo=Transacao.Tipo.ESTORNO,
+                meio=recebimento.meio, valor=recebimento.valor,
+                referencia_externa=f"Estorno do recebimento #{recebimento.pk} da venda #{venda.pk}"[:120],
+            )
+        conta.saldo = Decimal("0.00")
+        conta.estado = ContaReceber.Estado.CANCELADA
+        conta.save(update_fields=("saldo", "estado"))
     return venda

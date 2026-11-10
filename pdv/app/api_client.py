@@ -164,5 +164,10 @@ class ArmazemAPI:
         import socket
         return self._request('POST','/api/v1/terminais/heartbeat/',json={'identificador':socket.gethostname() + ':' + self.username,'pendentes':pendentes,'erros':erros}).json()
 
+    def descartar_venda_offline(self, chave, usuario, senha, justificativa, erro='', venda=None):
+        return self._request('POST', '/api/v1/vendas-offline/descartar/', json={
+            'chave': chave, 'usuario': usuario, 'senha': senha, 'justificativa': justificativa,
+            'erro': erro, 'venda': venda or {}}).json()
+
     def iniciar_gestao(self, area='painel'):
         return self._request('POST','/api/v1/desktop/session/',json={'area':area}).json()

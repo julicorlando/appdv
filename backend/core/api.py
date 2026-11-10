@@ -13,15 +13,26 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework_simplejwt.views import TokenObtainPairView
 from .models import Caixa, Categoria, Empresa, ItemPedidoWeb, MembroEmpresa, MovimentacaoCaixa, PedidoWeb, Produto, TokenAutorizacao, Transacao, Venda
 from .serializers import CategoriaSerializer, ProdutoSerializer, VendaSerializer
 from .services import cancelar_venda, registrar_venda
 from .pedido_web_services import finalizar_pedido_web
+from .access import caixa_para_movimento, conta_ativa
+from .throttles import (
+    AutorizacaoAprovadorThrottle, AutorizacaoOperadorThrottle, LoginIPThrottle, LoginUsuarioThrottle,
+)
+
+
+def _checar_conta(usuario):
+    if not conta_ativa(usuario):
+        raise PermissionDenied("Conta desativada.")
 
 
 class TenantAPIView(APIView):
     permission_classes = [IsAuthenticated]
     def get_empresa(self, request):
+        _checar_conta(request.user)
         empresa_id = request.headers.get("X-Empresa-ID")
         if not empresa_id:
             raise ValidationError({"empresa": "Informe X-Empresa-ID."})
@@ -31,9 +42,6 @@ class TenantAPIView(APIView):
             )
         except (MembroEmpresa.DoesNotExist, ValueError):
             raise PermissionDenied("Acesso negado a esta empresa.")
-        perfil = getattr(request.user, "perfil_armazem", None)
-        if perfil and not perfil.ativo:
-            raise PermissionDenied("Conta desativada.")
         return membro.empresa, membro
 
 
@@ -87,6 +95,7 @@ class DashboardEmpresaAPIView(TenantAPIView):
 class MinhasEmpresasView(APIView):
     permission_classes = [IsAuthenticated]
     def get(self, request):
+        _checar_conta(request.user)
         empresas = MembroEmpresa.objects.filter(
             usuario=request.user, ativo=True, empresa__ativa=True
         ).select_related("empresa")
@@ -97,6 +106,7 @@ class MinhasEmpresasView(APIView):
 class TenantViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated]
     def get_empresa(self):
+        _checar_conta(self.request.user)
         empresa_id = self.request.headers.get("X-Empresa-ID")
         if not empresa_id:
             raise ValidationError({"empresa": "Informe X-Empresa-ID."})
@@ -249,14 +259,19 @@ class ContasReceberView(TenantAPIView):
                 raise ValueError
         except (ContaReceber.DoesNotExist, ValueError, TypeError, InvalidOperation):
             raise ValidationError({"recebimento": "Conta, valor ou forma de pagamento inválidos."})
+        caixa = caixa_para_movimento(
+            empresa, request.user, [meio], caixa_id=request.data.get("caixa"),
+            operacao="receber em dinheiro",
+        )
         RecebimentoConta.objects.create(
-            conta=conta, empresa=empresa, operador=request.user,
+            conta=conta, empresa=empresa, operador=request.user, caixa=caixa,
             meio=meio, valor=valor, referencia=str(request.data.get("referencia", ""))[:120],
         )
         conta.saldo -= valor
         conta.estado = ContaReceber.Estado.QUITADA if conta.saldo == 0 else ContaReceber.Estado.PARCIAL
         conta.save(update_fields=("saldo", "estado"))
-        return Response({"id": conta.pk, "saldo": str(conta.saldo), "estado": conta.estado})
+        return Response({"id": conta.pk, "saldo": str(conta.saldo), "estado": conta.estado,
+                         "caixa": caixa.pk if caixa else None})
 
 
 class ContasPagarView(TenantAPIView):
@@ -328,10 +343,15 @@ class AbrirCaixaView(TenantAPIView):
 
 
 def _resumo_caixa(caixa):
+    from .models import RecebimentoConta
     transacoes = list(
-        Transacao.objects.filter(venda__caixa=caixa)
+        Transacao.objects.filter(caixa=caixa)
         .values("meio", "tipo").annotate(total=Sum("valor"))
     )
+    recebimentos = {
+        item["meio"]: item["total"] or Decimal("0.00")
+        for item in RecebimentoConta.objects.filter(caixa=caixa).values("meio").annotate(total=Sum("valor"))
+    }
     meios = {}
     for item in transacoes:
         meio = item["meio"]
@@ -342,9 +362,10 @@ def _resumo_caixa(caixa):
     sangrias = sum((x["total"] or Decimal("0") for x in movimentos if x["tipo"] == MovimentacaoCaixa.Tipo.SANGRIA), Decimal("0.00"))
     suprimentos = sum((x["total"] or Decimal("0") for x in movimentos if x["tipo"] == MovimentacaoCaixa.Tipo.SUPRIMENTO), Decimal("0.00"))
     dinheiro = meios.get(Transacao.Meio.DINHEIRO, {"pagamentos": Decimal("0"), "estornos": Decimal("0")})
+    recebido_dinheiro = recebimentos.get(Transacao.Meio.DINHEIRO, Decimal("0.00"))
     esperado = (
         caixa.saldo_abertura + dinheiro["pagamentos"] - dinheiro["estornos"]
-        + suprimentos - sangrias
+        + recebido_dinheiro + suprimentos - sangrias
     ).quantize(Decimal("0.01"))
     return {
         "caixa": caixa.pk,
@@ -355,6 +376,9 @@ def _resumo_caixa(caixa):
         "esperado_dinheiro": str(esperado),
         "sangrias": str(sangrias),
         "suprimentos": str(suprimentos),
+        "recebimentos_conta_por_meio": {
+            meio: str(Decimal(valor).quantize(Decimal("0.01"))) for meio, valor in recebimentos.items()
+        },
         "pagamentos_por_meio": {
             meio: {
                 "pagamentos": str(valores["pagamentos"]),
@@ -658,24 +682,14 @@ class OrcamentosView(TenantAPIView):
 
 
 class AutorizarDescontoView(TenantAPIView):
-    throttle_scope = 'autorizar_desconto'
-
-    def get_throttles(self):
-        from rest_framework.throttling import UserRateThrottle
-        class ApprovalThrottle(UserRateThrottle):
-            scope = 'autorizar_desconto'
-            rate = '10/min'
-        return [ApprovalThrottle()]
+    throttle_classes = [AutorizacaoOperadorThrottle, AutorizacaoAprovadorThrottle]
 
     def post(self, request):
         import uuid
-        from django.contrib.auth import authenticate
         from .models import AprovacaoDesconto
         from .discount_policy import fingerprint
         empresa, membro = self.get_empresa(request)
-        approver = authenticate(request=request, username=request.data.get('usuario', ''), password=request.data.get('senha', ''))
-        if not approver or not approver.is_active or not MembroEmpresa.objects.filter(empresa=empresa, usuario=approver, ativo=True, papel__in=['ADMIN', 'GERENTE']).exists():
-            raise PermissionDenied('Credenciais inválidas ou sem permissão nesta empresa.')
+        approver = _autenticar_gerente(request, empresa)
         try:
             key = uuid.UUID(str(request.data.get('chave')))
         except (TypeError, ValueError):
@@ -696,3 +710,63 @@ class TerminalHeartbeatView(TenantAPIView):
         except (ValueError,TypeError):raise ValidationError('Terminal ou quantidade inválidos.')
         TerminalPDV.objects.update_or_create(empresa=empresa,identificador=name,defaults={'operador':request.user,'pendentes':count,'erros':str(request.data.get('erros',''))[:2000]})
         return Response({'ok':True})
+
+
+def _autenticar_gerente(request, empresa):
+    from django.contrib.auth import authenticate
+    approver = authenticate(request=request, username=request.data.get('usuario', ''), password=request.data.get('senha', ''))
+    if not approver or not conta_ativa(approver) or not MembroEmpresa.objects.filter(
+        empresa=empresa, usuario=approver, ativo=True, papel__in=['ADMIN', 'GERENTE']
+    ).exists():
+        raise PermissionDenied('Credenciais inválidas ou sem permissão nesta empresa.')
+    return approver
+
+
+class DescartarVendaOfflineView(TenantAPIView):
+    """Encerra no PDV uma venda offline que o servidor recusou.
+
+    A venda não é registrada: o descarte exige senha de gerente/administrador,
+    justificativa e fica auditado com o conteúdo da venda, para que a loja
+    possa lançá-la de novo ou cobrar a diferença.
+    """
+    throttle_classes = [AutorizacaoOperadorThrottle, AutorizacaoAprovadorThrottle]
+
+    def post(self, request):
+        import uuid
+        from .management_services import audit
+        empresa, membro = self.get_empresa(request)
+        try:
+            chave = uuid.UUID(str(request.data.get('chave')))
+        except (TypeError, ValueError):
+            raise ValidationError({'chave': 'Informe a chave da venda pendente.'})
+        justificativa = str(request.data.get('justificativa', '')).strip()
+        if len(justificativa) < 5:
+            raise ValidationError({'justificativa': 'Descreva o motivo do descarte (mínimo de 5 caracteres).'})
+        venda = Venda.objects.filter(empresa=empresa, idempotency_key=chave).first()
+        if venda:
+            # A venda chegou ao servidor; o PDV só precisa limpar a fila.
+            return Response({'sincronizada': True, 'venda': venda.pk})
+        approver = _autenticar_gerente(request, empresa)
+        venda_local = request.data.get('venda')
+        audit(empresa, request.user, 'VENDA_OFFLINE_DESCARTADA', str(chave),
+              aprovador=approver.username, justificativa=justificativa[:500],
+              erro=str(request.data.get('erro', ''))[:500],
+              venda=venda_local if isinstance(venda_local, dict) else {})
+        return Response({'descartada': True}, status=status.HTTP_201_CREATED)
+
+
+class LoginView(TokenObtainPairView):
+    """Login JWT com limite de tentativas e bloqueio de contas desativadas."""
+    throttle_classes = [LoginUsuarioThrottle, LoginIPThrottle]
+
+    def get_serializer_class(self):
+        from rest_framework.exceptions import AuthenticationFailed
+        from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+
+        class Serializer(TokenObtainPairSerializer):
+            def validate(self, attrs):
+                data = super().validate(attrs)
+                if not conta_ativa(self.user):
+                    raise AuthenticationFailed('Conta desativada.')
+                return data
+        return Serializer
