@@ -16,14 +16,14 @@ from PySide6.QtCore import QEventLoop, QUrl, QTimer, Qt, QSettings, QThread, Sig
 import requests
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout,
-    QInputDialog, QLineEdit, QLabel, QMainWindow, QMessageBox, QPushButton,
+    QInputDialog, QLineEdit, QLabel, QMainWindow, QMessageBox, QProgressDialog, QPushButton,
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from app import VERSION, parse_version
 from app.api_client import ArmazemAPI
 from app.local_store import LocalStore
-from app import offline_auth
+from app import offline_auth, updater
 from app.payments import PaymentDialog
 from app.quotes import quote_html
 from app.discounts import distribute_discount
@@ -367,6 +367,9 @@ class PDVWindow(QMainWindow):
         self._build()
         self._select_company()
         QTimer.singleShot(1500, self._check_version)
+        self.update_timer = QTimer(self)
+        self.update_timer.timeout.connect(self._check_version)
+        self.update_timer.start(30 * 60 * 1000)  # procura atualização a cada 30 minutos
         self.sync_timer = QTimer(self)
         self.sync_timer.timeout.connect(self._sync_pending)
         self.sync_timer.start(SYNC_INTERVAL_MS)
@@ -442,6 +445,15 @@ class PDVWindow(QMainWindow):
         self.connection_label.setObjectName("connection")
         self.connection_label.setToolTip("Sincronização automática a cada 10 segundos.")
         header.addWidget(self.connection_label)
+        # Aparece só quando o servidor anuncia uma versão mais nova do PDV.
+        self.update_button = QPushButton("⬆ Atualizar ApPdv")
+        self.update_button.setObjectName("updateButton")
+        self.update_button.setStyleSheet("QPushButton#updateButton { background: #2e7d32; color: white; font-weight: 800; padding: 6px 14px; }")
+        self.update_button.clicked.connect(self._update_app)
+        self.update_button.hide()
+        header.addWidget(self.update_button)
+        self.update_info = None
+        self.update_worker = None
         self.logout_button = QPushButton("Sair")
         self.logout_button.setToolTip("Encerra a sessão deste operador e volta para a tela de login.")
         self.logout_button.clicked.connect(self._logout)
@@ -711,6 +723,8 @@ class PDVWindow(QMainWindow):
     def _set_online(self, online, message=''):
         if online and not self.online:
             self.status.setText('Conexão restabelecida · sincronizando')
+            if hasattr(self, 'update_button'):
+                QTimer.singleShot(2000, self._check_version)
         if not online and self.online:
             self.offline_since = time.time()
         if online:
@@ -1424,10 +1438,17 @@ class PDVWindow(QMainWindow):
                 field.clear()
 
     def _check_version(self):
+        if not self.online:
+            return
         try:
             data = self.api.versao_pdv()
         except Exception:
             return
+        nova = parse_version(VERSION) < parse_version(data.get("versao_atual", "0"))
+        self.update_info = data if nova else None
+        self.update_button.setVisible(nova)
+        if nova:
+            self.update_button.setToolTip(f"Versão {data.get('versao_atual')} disponível (esta é a {VERSION}). Clique para baixar e instalar.")
         if parse_version(VERSION) < parse_version(data.get("versao_minima", "0")):
             link = data.get("download_url") or "o link enviado pelo administrador"
             QMessageBox.warning(self, "Atualize o ApPdv",
@@ -1435,6 +1456,64 @@ class PDVWindow(QMainWindow):
                                 f"Baixe o instalador novo em {link} antes de continuar vendendo.")
         elif parse_version(VERSION) < parse_version(data.get("versao_atual", "0")):
             self.status.setText(f"Nova versão do ApPdv disponível ({data.get('versao_atual')}).")
+
+    def _update_app(self):
+        info = self.update_info or {}
+        versao = info.get("versao_atual", "")
+        if not versao:
+            return
+        if not updater.instalado() or not info.get("instalador_url"):
+            QMessageBox.information(self, "Atualizar ApPdv",
+                                    f"A versão {versao} está disponível. Esta cópia não foi instalada pelo instalador "
+                                    "(versão portátil), então o download abre no navegador: substitua a pasta pelos arquivos novos.")
+            QDesktopServices.openUrl(QUrl(info.get("download_url") or "https://github.com/julicorlando/appdv/releases/latest"))
+            return
+        if self.checkout_payload:
+            QMessageBox.warning(self, "Atualizar ApPdv", "Confirme a venda pendente antes de atualizar.")
+            return
+        aviso = (f"Baixar e instalar o ApPdv {versao}?\n\nO programa fecha durante a instalação (cerca de 1 minuto) e abre "
+                 "sozinho no final. Vendas guardadas neste computador e o caixa aberto são mantidos.")
+        if QMessageBox.question(self, "Atualizar ApPdv", aviso) != QMessageBox.StandardButton.Yes:
+            return
+        progresso = QProgressDialog("Baixando a atualização…", "Cancelar", 0, 100, self)
+        progresso.setWindowTitle("Atualizar ApPdv")
+        progresso.setMinimumDuration(0)
+        self.update_worker = updater.DownloadWorker(info["instalador_url"], info.get("sha256_url", ""), versao,
+                                                    servidor=getattr(self.api, "base_url", ""), parent=self)
+
+        def avancou(recebido, total):
+            if total:
+                progresso.setValue(int(recebido * 100 / total))
+                progresso.setLabelText(f"Baixando a atualização… {recebido // 1048576} de {total // 1048576} MB")
+
+        def falhou(mensagem):
+            progresso.close()
+            QMessageBox.warning(self, "Atualizar ApPdv", f"Não foi possível atualizar agora: {mensagem}")
+
+        def baixou(caminho):
+            progresso.close()
+            self._install_update(caminho)
+
+        progresso.canceled.connect(lambda: setattr(self.update_worker, "cancelado", True))
+        self.update_worker.progress.connect(avancou)
+        self.update_worker.failed.connect(falhou)
+        self.update_worker.done.connect(baixou)
+        self.update_worker.start()
+
+    def _install_update(self, caminho):
+        """Termina a sincronização, inicia o instalador e fecha o ApPdv (o instalador o reabre)."""
+        self.sync_timer.stop()
+        self.update_timer.stop()
+        if self.sync_worker and self.sync_worker.isRunning():
+            self.sync_worker.wait(15000)
+        try:
+            updater.iniciar_instalador(caminho)
+        except OSError as exc:
+            QMessageBox.warning(self, "Atualizar ApPdv", f"Não foi possível iniciar o instalador: {exc}")
+            self.sync_timer.start(SYNC_INTERVAL_MS)
+            return
+        self.logout_requested = False
+        self.close()
 
     def _create_web_order(self):
         if self.checkout_payload:

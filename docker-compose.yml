@@ -36,7 +36,7 @@ services:
       DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL:-}
       # PDV instalado: versão mínima aceita e link do instalador mais recente.
       PDV_VERSAO_MINIMA: ${PDV_VERSAO_MINIMA:-0.3.0}
-      PDV_VERSAO_ATUAL: ${PDV_VERSAO_ATUAL:-0.3.2}
+      PDV_VERSAO_ATUAL: ${PDV_VERSAO_ATUAL:-0.3.3}
       PDV_OFFLINE_DIAS: ${PDV_OFFLINE_DIAS:-30}
       PDV_DOWNLOAD_URL: ${PDV_DOWNLOAD_URL:-https://github.com/julicorlando/appdv/releases/latest}
       BACKUP_MANTER: ${BACKUP_MANTER:-14}
