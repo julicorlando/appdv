@@ -79,6 +79,14 @@ As operações protegidas exigem conexão com o servidor. Vendas que falham por 
 
 Todas as chamadas de negócio exigem JWT e `X-Empresa-ID`.
 
+## Cobrança das empresas (Painel Master)
+
+- **Planos** com valor mensal, caixas incluídos e valor por caixa adicional; **teste grátis** (dias configuráveis), **isenção** (com ou sem prazo), valor especial, desconto e dia de vencimento por empresa.
+- **Faturas mensais** geradas antes do vencimento; pagamento por **PIX ou cartão** no checkout do Mercado Pago da conta do master (token em *Cobrança e planos*). A baixa é automática (webhook `/api/v1/cobranca/webhook/` e consulta ao Mercado Pago).
+- **Suspensão automática:** fatura vencida além da carência bloqueia o painel e o PDV da empresa, que vê só a tela *Assinatura* para pagar; ao pagar, libera na hora. Faixa de aviso antes do vencimento e durante a carência.
+- **Master com acesso total:** botão *Entrar* abre o painel de qualquer empresa como administrador (inclusive suspensa), com registro na auditoria.
+- Empresas existentes antes da cobrança ficam isentas até o master escolher o plano. Agende `python manage.py processar_cobranca` diariamente no Coolify (o sistema também roda o ciclo sozinho a cada hora).
+
 ## PDV 0.3.1: funcionamento sem internet
 
 - **Login offline por 30 dias:** depois de entrar online uma vez no computador, o operador entra sem internet com a mesma senha (o PDV guarda só uma verificação PBKDF2, nunca a senha). Cada login online renova o prazo (`PDV_OFFLINE_DIAS`).
