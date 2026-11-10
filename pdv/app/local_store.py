@@ -40,6 +40,11 @@ class LocalStore:
                 payload TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 last_error TEXT NOT NULL DEFAULT ''
             )""")
+            columns = {row[1] for row in db.execute("PRAGMA table_info(pending_sales)")}
+            if "status" not in columns:
+                # PENDENTE = reenvio automático; REJEITADA = o servidor recusou e
+                # a venda precisa ser revisada (reenviar ou descartar com gerente).
+                db.execute("ALTER TABLE pending_sales ADD COLUMN status TEXT NOT NULL DEFAULT 'PENDENTE'")
 
     def connect(self):
         return sqlite3.connect(self.path)
@@ -66,12 +71,37 @@ class LocalStore:
                 (payload["idempotency_key"], str(tenant_id), json.dumps(payload), error[:500]),
             )
 
-    def pending_sales(self, tenant_id):
+    def pending_sales(self, tenant_id, include_rejected=False):
+        """Vendas que o envio automático deve tentar; as recusadas só com ação do operador."""
+        query = "SELECT idempotency_key, payload FROM pending_sales WHERE tenant_id=?"
+        if not include_rejected:
+            query += " AND status='PENDENTE'"
         with self.connect() as db:
-            return db.execute(
-                "SELECT idempotency_key, payload FROM pending_sales WHERE tenant_id=? ORDER BY created_at",
+            return db.execute(query + " ORDER BY created_at", (str(tenant_id),)).fetchall()
+
+    def set_rejected(self, idempotency_key, error):
+        with self.connect() as db:
+            db.execute(
+                "UPDATE pending_sales SET last_error=?, status='REJEITADA' WHERE idempotency_key=?",
+                (str(error)[:500], idempotency_key),
+            )
+
+    def retry_sale(self, idempotency_key):
+        with self.connect() as db:
+            db.execute("UPDATE pending_sales SET status='PENDENTE' WHERE idempotency_key=?", (idempotency_key,))
+
+    def pending_details(self, tenant_id, operator):
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT idempotency_key, payload, last_error, status, created_at FROM pending_sales WHERE tenant_id=? ORDER BY created_at",
                 (str(tenant_id),),
             ).fetchall()
+        result = []
+        for key, payload, error, status, created_at in rows:
+            data = json.loads(payload)
+            if data.get('operador_local') == operator:
+                result.append({'chave': key, 'payload': data, 'erro': error, 'status': status, 'criada_em': created_at})
+        return result
 
     def mark_synced(self, idempotency_key):
         with self.connect() as db:
