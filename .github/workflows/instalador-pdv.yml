@@ -1,0 +1,58 @@
+name: Instalador do PDV (Windows)
+
+# Gera o instalador do PDV a cada mudança no aplicativo e, em uma tag pdv-vX.Y.Z,
+# publica o instalador na página de Releases (link usado em PDV_DOWNLOAD_URL).
+on:
+  push:
+    branches: [main]
+    tags: ["pdv-v*"]
+    paths: ["pdv/**", ".github/workflows/instalador-pdv.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: pdv
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pdv/requirements-build.txt
+      - name: Dependências
+        run: python -m pip install -r requirements-build.txt
+      - name: Versão
+        id: versao
+        shell: bash
+        run: echo "valor=$(python -c 'from app import VERSION; print(VERSION)')" >> "$GITHUB_OUTPUT"
+      - name: Conferir tag e versão
+        if: startsWith(github.ref, 'refs/tags/pdv-v')
+        shell: bash
+        run: |
+          test "${GITHUB_REF_NAME#pdv-v}" = "${{ steps.versao.outputs.valor }}" || {
+            echo "A tag ${GITHUB_REF_NAME} não bate com VERSION=${{ steps.versao.outputs.valor }} em pdv/app/__init__.py"; exit 1; }
+      - name: Empacotar (PyInstaller)
+        run: python -m PyInstaller --noconfirm --clean --onedir --windowed --name ApPdv --icon=assets\appdv-icon.ico --add-data "assets;assets" run_pdv.py
+      - name: Gerar instalador (Inno Setup)
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVer=${{ steps.versao.outputs.valor }}" installer\ApPdv.iss
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ApPdv-Setup-${{ steps.versao.outputs.valor }}
+          path: pdv/dist/installer/*.exe
+          retention-days: 30
+      - name: Publicar na Release
+        if: startsWith(github.ref, 'refs/tags/pdv-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: pdv/dist/installer/*.exe
+          name: ApPdv ${{ steps.versao.outputs.valor }}
+          body: Instalador do PDV para Windows. Baixe, execute e mantenha o endereço do servidor com https://.
