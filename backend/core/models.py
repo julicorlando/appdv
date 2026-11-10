@@ -27,6 +27,16 @@ class Empresa(models.Model):
     email = models.EmailField("E-mail", blank=True)
     ambiente_fiscal = models.CharField("Ambiente fiscal", max_length=12, default="HOMOLOGACAO", choices=[("HOMOLOGACAO", "Homologação"), ("PRODUCAO", "Produção")])
     provedor_fiscal = models.CharField("Provedor fiscal", max_length=100, blank=True)
+    # Integrações. Os tokens nunca são exibidos de volta no painel.
+    focus_token = models.CharField("Token Focus NFe", max_length=200, blank=True)
+    nfce_automatica = models.BooleanField("Emitir NFC-e automaticamente após cada venda", default=False)
+    pis_cofins_cst = models.CharField(
+        "CST de PIS/COFINS nas notas", max_length=2, blank=True,
+        choices=[("", "— definir com o contador —"), ("01", "01 · Tributável alíquota básica"),
+                 ("04", "04 · Monofásica (alíquota zero)"), ("06", "06 · Alíquota zero"), ("07", "07 · Isenta"),
+                 ("08", "08 · Sem incidência"), ("49", "49 · Outras operações de saída"), ("99", "99 · Outras operações")],
+    )
+    mp_access_token = models.CharField("Access token do Mercado Pago (PIX)", max_length=300, blank=True)
     slug = models.SlugField(max_length=180, unique=True)
     ativa = models.BooleanField(default=True)
     logo = models.ImageField(upload_to="empresas/logos/", blank=True)
@@ -99,6 +109,35 @@ class Produto(models.Model):
     estoque_minimo = models.DecimalField(max_digits=14, decimal_places=3, default=0)
     ativo = models.BooleanField(default=True)
     atualizado_em = models.DateTimeField(auto_now=True)
+    foto = models.ImageField(upload_to="produtos/fotos/", blank=True)
+    # Promoção com período: enquanto vigente, o preço promocional vale em todo o sistema
+    # (PDV, caixa web, orçamentos e pedidos web).
+    preco_promocional = models.DecimalField("Preço promocional", max_digits=12, decimal_places=2, null=True, blank=True, validators=[MinValueValidator(0)])
+    promocao_inicio = models.DateField("Promoção a partir de", null=True, blank=True)
+    promocao_fim = models.DateField("Promoção até", null=True, blank=True)
+    # Dados fiscais da NFC-e/NF-e (confirme os códigos com o contador).
+    ncm = models.CharField("NCM", max_length=8, blank=True)
+    cest = models.CharField("CEST", max_length=7, blank=True)
+    cfop = models.CharField("CFOP", max_length=4, default="5102")
+    csosn = models.CharField("CSOSN/CST do ICMS", max_length=3, default="102")
+    origem = models.CharField("Origem da mercadoria", max_length=1, default="0", choices=[
+        ("0", "0 · Nacional"), ("1", "1 · Estrangeira, importação direta"), ("2", "2 · Estrangeira, mercado interno"),
+        ("3", "3 · Nacional, conteúdo importado > 40%"), ("4", "4 · Nacional, processos produtivos básicos"),
+        ("5", "5 · Nacional, conteúdo importado ≤ 40%"), ("6", "6 · Estrangeira sem similar, importação direta"),
+        ("7", "7 · Estrangeira sem similar, mercado interno"), ("8", "8 · Nacional, conteúdo importado > 70%")])
+
+    def promocao_ativa(self, hoje=None):
+        hoje = hoje or timezone.localdate()
+        return bool(
+            self.preco_promocional is not None and 0 < self.preco_promocional < self.preco_venda
+            and (self.promocao_inicio is None or self.promocao_inicio <= hoje)
+            and (self.promocao_fim is None or hoje <= self.promocao_fim)
+        )
+
+    @property
+    def preco_atual(self):
+        """Preço cobrado hoje: promocional quando vigente, senão o preço de venda."""
+        return self.preco_promocional if self.promocao_ativa() else self.preco_venda
 
     class Meta:
         constraints = [
@@ -434,6 +473,10 @@ class ContaPagar(models.Model):
     fornecedor = models.ForeignKey(Fornecedor, on_delete=models.PROTECT, related_name="contas_pagar")
     compra = models.OneToOneField(CompraEntrada, null=True, blank=True, on_delete=models.PROTECT, related_name="conta_pagar")
     descricao = models.CharField(max_length=240)
+    categoria = models.CharField(max_length=40, blank=True, choices=[
+        ("", "Compra de mercadoria"), ("ALUGUEL", "Aluguel"), ("ENERGIA", "Energia, água e internet"),
+        ("SALARIOS", "Salários e encargos"), ("IMPOSTOS", "Impostos e taxas"), ("SERVICOS", "Serviços"),
+        ("MANUTENCAO", "Manutenção"), ("OUTROS", "Outras despesas")])
     valor_original = models.DecimalField(max_digits=14, decimal_places=2)
     saldo = models.DecimalField(max_digits=14, decimal_places=2)
     vencimento = models.DateField(db_index=True)
@@ -650,6 +693,7 @@ class TerminalPDV(models.Model):
     identificador = models.CharField(max_length=120)
     pendentes = models.PositiveIntegerField(default=0)
     erros = models.TextField(blank=True)
+    versao = models.CharField(max_length=20, blank=True)
     ultimo_contato = models.DateTimeField(auto_now=True)
     class Meta:
         constraints = [models.UniqueConstraint(fields=('empresa','identificador'), name='uniq_terminal_empresa')]
@@ -658,7 +702,13 @@ class TerminalPDV(models.Model):
 class DocumentoFiscal(models.Model):
     empresa = models.ForeignKey(Empresa, on_delete=models.CASCADE)
     venda = models.OneToOneField(Venda, on_delete=models.PROTECT)
-    estado = models.CharField(max_length=16, default='CONFIGURAR', choices=[('CONFIGURAR','Configuração pendente'),('PENDENTE','Aguardando integração'),('AUTORIZADO','Autorizado'),('REJEITADO','Rejeitado'),('CANCELADO','Cancelado')])
+    estado = models.CharField(max_length=16, default='CONFIGURAR', choices=[('CONFIGURAR','Configuração pendente'),('PENDENTE','Aguardando integração'),('PROCESSANDO','Processando na SEFAZ'),('AUTORIZADO','Autorizado'),('REJEITADO','Rejeitado'),('CANCELADO','Cancelado')])
+    referencia = models.CharField(max_length=60, blank=True, db_index=True)
+    ambiente = models.CharField(max_length=12, blank=True)
+    numero = models.CharField(max_length=20, blank=True)
+    serie = models.CharField(max_length=5, blank=True)
+    danfe_url = models.URLField(max_length=500, blank=True)
+    xml_url = models.URLField(max_length=500, blank=True)
     chave = models.CharField(max_length=44, blank=True)
     protocolo = models.CharField(max_length=80, blank=True)
     mensagem = models.TextField(blank=True)
@@ -674,3 +724,28 @@ class SessaoDesktopTicket(models.Model):
     area = models.CharField(max_length=40, default='')
     expira_em = models.DateTimeField()
     usada_em = models.DateTimeField(null=True, blank=True)
+
+
+class CobrancaPix(models.Model):
+    """Cobrança PIX dinâmica (Mercado Pago). A confirmação vem sempre de consulta à API do provedor."""
+    class Estado(models.TextChoices):
+        PENDENTE = 'PENDENTE', 'Aguardando pagamento'
+        APROVADO = 'APROVADO', 'Pago'
+        EXPIRADO = 'EXPIRADO', 'Expirado'
+        CANCELADO = 'CANCELADO', 'Cancelado'
+
+    empresa = models.ForeignKey(Empresa, on_delete=models.CASCADE, related_name='cobrancas_pix')
+    operador = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    chave = models.UUIDField(unique=True)
+    provedor_id = models.CharField(max_length=40, blank=True, db_index=True)
+    valor = models.DecimalField(max_digits=12, decimal_places=2, validators=[MinValueValidator(0)])
+    estado = models.CharField(max_length=10, choices=Estado.choices, default=Estado.PENDENTE, db_index=True)
+    qr_code = models.TextField(blank=True)
+    qr_base64 = models.TextField(blank=True)
+    venda = models.ForeignKey(Venda, null=True, blank=True, on_delete=models.PROTECT, related_name='cobrancas_pix')
+    criada_em = models.DateTimeField(auto_now_add=True)
+    atualizada_em = models.DateTimeField(auto_now=True)
+    expira_em = models.DateTimeField()
+
+    class Meta:
+        ordering = ('-criada_em',)
