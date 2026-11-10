@@ -25,6 +25,7 @@
       <button class="secondary" id="pos-print" type="button">Imprimir orçamento</button>
       <button class="primary" id="pos-pay" type="button">Receber venda</button>
       <button class="secondary" id="pos-receipt" type="button" hidden>Imprimir comprovante</button>
+      <span id="pos-nfce" hidden><button class="secondary" id="pos-nfce-emitir" type="button">Emitir NFC-e</button> <a id="pos-nfce-danfe" target="_blank" rel="noopener" hidden>Abrir DANFE</a> <small id="pos-nfce-status"></small></span>
     </section>
   </div>
   <div class="pos-totals"><strong id="pos-status"></strong><div><span>Total da venda</span><strong id="pos-total">R$ 0,00</strong></div></div>
@@ -36,6 +37,7 @@
     <button class="secondary" id="pos-close">Fechar caixa</button>
     <pre id="pos-summary-text" hidden></pre>
   </section>
+  <script id="pos-integracoes" type="application/json">{"pix": {{ pix_configurado|yesno:"true,false" }}, "nfce": {{ nfce_configurada|yesno:"true,false" }}}</script>
   <dialog id="pos-payment">
     <form id="pos-payment-form">
       <h2>Pagamento</h2><p id="pos-due"></p>
@@ -43,6 +45,7 @@
       <label>{{ label }} <input type="number" name="{{ value }}" min="0" step="0.01" placeholder="0,00"></label>
       {% endfor %}
       <label>Desconto manual<select id="pos-discount-mode"><option value="R$">R$</option><option value="%">%</option></select><input id="pos-discount" type="number" min="0" step="0.01" value="0"></label>
+      {% if pix_configurado %}<div class="panel" id="pos-pix-box"><button type="button" class="secondary" id="pos-pix-gerar">Gerar QR Code PIX do valor informado</button><img id="pos-pix-qr" alt="QR Code PIX" hidden style="width:220px;height:220px;display:block;margin:.5rem 0"><textarea id="pos-pix-copia" readonly rows="3" hidden aria-label="PIX copia e cola"></textarea><p id="pos-pix-status" role="status" aria-live="polite"></p></div>{% endif %}
       <p id="pos-discount-summary"></p><label>Gerente/admin para autorização<input id="pos-supervisor" autocomplete="off"></label><label>Senha de autorização<input id="pos-supervisor-password" type="password" autocomplete="off"></label>
       <button type="submit" class="primary">Confirmar venda</button>
       <button type="button" class="secondary" id="pos-cancel-pay">Voltar</button>
