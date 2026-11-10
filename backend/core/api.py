@@ -835,7 +835,7 @@ class LoginView(TokenObtainPairView):
 def _versoes_pdv():
     import os
     from django.conf import settings as _settings
-    return {"versao_minima": os.getenv("PDV_VERSAO_MINIMA", "0.3.0"), "versao_atual": os.getenv("PDV_VERSAO_ATUAL", "0.3.1"),
+    return {"versao_minima": os.getenv("PDV_VERSAO_MINIMA", "0.3.0"), "versao_atual": os.getenv("PDV_VERSAO_ATUAL", "0.3.2"),
             "download_url": os.getenv("PDV_DOWNLOAD_URL", ""), "offline_dias": _settings.PDV_OFFLINE_DIAS,
             "agora": timezone.now().isoformat()}
 
