@@ -28,10 +28,22 @@ services:
       NUM_PROXIES: ${NUM_PROXIES:-1}
       # HTTPS é obrigatório por padrão; use False só se o proxy já redirecionar e estiver causando loop.
       SECURE_SSL_REDIRECT: ${SECURE_SSL_REDIRECT:-True}
+      # Envio de e-mail para "Esqueci minha senha" (opcional).
+      EMAIL_HOST: ${EMAIL_HOST:-}
+      EMAIL_PORT: ${EMAIL_PORT:-587}
+      EMAIL_HOST_USER: ${EMAIL_HOST_USER:-}
+      EMAIL_HOST_PASSWORD: ${EMAIL_HOST_PASSWORD:-}
+      DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL:-}
+      # PDV instalado: versão mínima aceita e link do instalador mais recente.
+      PDV_VERSAO_MINIMA: ${PDV_VERSAO_MINIMA:-0.3.0}
+      PDV_VERSAO_ATUAL: ${PDV_VERSAO_ATUAL:-0.3.0}
+      PDV_DOWNLOAD_URL: ${PDV_DOWNLOAD_URL:-https://github.com/julicorlando/appdv/releases/latest}
+      BACKUP_MANTER: ${BACKUP_MANTER:-14}
     expose:
       - "8000"
     volumes:
       - app_media:/app/media
+      - app_backups:/app/backups
     depends_on:
       db:
         condition: service_healthy
@@ -39,3 +51,4 @@ services:
 volumes:
   postgres_data:
   app_media:
+  app_backups:
