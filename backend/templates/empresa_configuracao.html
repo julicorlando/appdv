@@ -4,11 +4,12 @@
 <div class="page-head"><div><p class="eyebrow">IDENTIDADE DA EMPRESA</p><h1>Dados da empresa e configuração fiscal</h1><p>Dados usados na identificação dos orçamentos e comprovantes.</p></div><nav class="nav-links"><a class="secondary" href="{% url 'empresa-dashboard' empresa.id %}">Painel</a></nav></div>
 <section class="panel" style="max-width:680px">
 {% if logo_preview %}<p>Logo atual:</p><img src="{{ logo_preview }}" alt="Logo de {{ empresa.nome }}" style="display:block;max-width:260px;max-height:120px;object-fit:contain;margin:1rem 0">{% endif %}
+{% if membro.papel == 'ADMIN' %}<p><b>Integrações:</b> Focus NFe {% if empresa.focus_token %}configurada ✓{% else %}não configurada{% endif %} · PIX Mercado Pago {% if empresa.mp_access_token %}configurado ✓{% else %}não configurado{% endif %}. Os tokens não são exibidos depois de salvos.</p>{% endif %}
 <form method="post" enctype="multipart/form-data">{% csrf_token %}
 {{ form.as_p }}
 <p>O frete padrão vale para novos pedidos com entrega. Retirada não cobra frete.</p>
 <button type="submit">Salvar configurações</button>
 </form>
-<p>A emissão de NF-e ainda não está habilitada. O cadastro não transmite documentos à SEFAZ. Certificados e credenciais deverão ser configurados por integração segura com o provedor; não informe senhas nestes campos.</p>
+<p>A NFC-e é emitida pela Focus NFe: o certificado digital A1 e o CSC ficam no painel da Focus, não aqui. Comece em homologação e só mude para produção depois de testar. O PIX automático usa o access token do Mercado Pago.</p>
 </section>
 {% endblock %}
