@@ -351,3 +351,15 @@ class BackupTests(Base):
             self.assertLessEqual(len(arquivos), 2)
             dados = json.loads(gzip.open(arquivos[-1], "rt", encoding="utf-8").read())
             self.assertTrue(any(obj["model"] == "core.produto" for obj in dados))
+
+
+class MasterDownloadTests(Base):
+    def test_master_mostra_downloads_do_pdv(self):
+        master = get_user_model().objects.create_superuser("master03", password="Master#Seguro123", email="m@example.com")
+        TerminalPDV.objects.create(empresa=self.company, operador=self.user, identificador="pc:antigo", versao="0.2.0")
+        self.client.force_login(master)
+        resposta = self.client.get("/master/")
+        self.assertContains(resposta, "releases/latest/download/ApPdv-Setup.exe")
+        self.assertContains(resposta, "releases/latest/download/ApPdv-Portatil.zip")
+        self.assertContains(resposta, "atualizar")
+        self.assertEqual(resposta.context["pdv"]["desatualizados"], 1)
