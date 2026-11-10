@@ -92,9 +92,9 @@ def registrar_venda(*, empresa, usuario, dados, frete=Decimal("0.00")):
                 raise ValueError
             quantidade_estoque = (quantidade * fator).quantize(Decimal("0.001"))
             desconto = Decimal(str(linha.get("desconto", "0")))
-            if "preco_esperado" in linha and Decimal(str(linha['preco_esperado'])) != produto.preco_venda:
+            if "preco_esperado" in linha and Decimal(str(linha['preco_esperado'])) != produto.preco_atual:
                 raise ValidationError({'itens': f'Preço de {produto.nome} mudou. Venda pendente de revisão.'})
-            bruto = (produto.preco_venda * quantidade).quantize(Decimal("0.01"))
+            bruto = (produto.preco_atual * quantidade).quantize(Decimal("0.01"))
             if not desconto.is_finite() or desconto < 0 or desconto > bruto:
                 raise ValueError
         except Produto.DoesNotExist:
@@ -120,6 +120,7 @@ def registrar_venda(*, empresa, usuario, dados, frete=Decimal("0.00")):
     aprovacao = validar_desconto(empresa, usuario, dados, subtotal, desconto_total)
     total = subtotal - desconto_total + frete
     valores_pagamento = []
+    cobrancas_pix = []
     soma_pagamentos = Decimal("0")
     for pagamento in pagamentos:
         try:
@@ -141,9 +142,21 @@ def registrar_venda(*, empresa, usuario, dados, frete=Decimal("0.00")):
                 raise ValueError
         except (KeyError, ValueError, TypeError, InvalidOperation):
             raise ValidationError({"pagamentos": "Forma, valor recebido ou troco inválido."})
-        valores_pagamento.append(
-            (meio, valor, recebido, troco, str(pagamento.get("referencia_externa", "")))
-        )
+        referencia = str(pagamento.get("referencia_externa", ""))
+        if pagamento.get("cobranca_pix") not in (None, ""):
+            # PIX dinâmico: só aceita cobrança paga, da mesma empresa, ainda não usada e do mesmo valor.
+            from .models import CobrancaPix
+            try:
+                cobranca = CobrancaPix.objects.select_for_update().get(
+                    pk=pagamento["cobranca_pix"], empresa=empresa, venda__isnull=True,
+                )
+            except (CobrancaPix.DoesNotExist, ValueError, TypeError):
+                raise ValidationError({"pagamentos": "Cobrança PIX não encontrada ou já usada em outra venda."})
+            if meio != Transacao.Meio.PIX or cobranca.estado != CobrancaPix.Estado.APROVADO or cobranca.valor != valor:
+                raise ValidationError({"pagamentos": "A cobrança PIX ainda não foi paga ou não corresponde ao valor informado."})
+            cobrancas_pix.append(cobranca)
+            referencia = f"PIX Mercado Pago {cobranca.provedor_id}"
+        valores_pagamento.append((meio, valor, recebido, troco, referencia))
         soma_pagamentos += valor
     if (soma_pagamentos + credito).quantize(Decimal("0.01")) != total:
         raise ValidationError({"pagamentos": "Pagamentos e crédito precisam corresponder ao total da venda."})
@@ -181,7 +194,7 @@ def registrar_venda(*, empresa, usuario, dados, frete=Decimal("0.00")):
         ItemVenda.objects.create(
             empresa=empresa, venda=venda, produto=produto, quantidade=quantidade,
             custo_estoque_unitario=produto.custo_medio,
-            preco_unitario=produto.preco_venda, desconto=desconto, fator_conversao=fator, total=total_linha,
+            preco_unitario=produto.preco_atual, desconto=desconto, fator_conversao=fator, total=total_linha,
         )
     for produto_id, quantidade_total in estoque_solicitado.items():
         produto = produtos_travados[produto_id]
@@ -207,6 +220,9 @@ def registrar_venda(*, empresa, usuario, dados, frete=Decimal("0.00")):
         )
     if credito_loja:
         CreditoLoja.objects.create(empresa=empresa,cliente=cliente,venda=venda,valor=-credito_loja)
+    for cobranca in cobrancas_pix:
+        cobranca.venda = venda
+        cobranca.save(update_fields=("venda", "atualizada_em"))
     if aprovacao:
         aprovacao.venda = venda
         aprovacao.save(update_fields=['venda'])
