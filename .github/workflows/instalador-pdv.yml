@@ -50,12 +50,16 @@ jobs:
         run: |
           Copy-Item "dist\installer\ApPdv-Setup-${{ steps.versao.outputs.valor }}.exe" "dist\installer\ApPdv-Setup.exe"
           Compress-Archive -Path "dist\ApPdv\*" -DestinationPath "dist\installer\ApPdv-Portatil.zip"
+          # Assinatura conferida pelo botão "Atualizar ApPdv" antes de instalar.
+          $hash = (Get-FileHash "dist\installer\ApPdv-Setup.exe" -Algorithm SHA256).Hash.ToLower()
+          Set-Content -Path "dist\installer\ApPdv-Setup.exe.sha256" -Value "$hash  ApPdv-Setup.exe" -Encoding ascii -NoNewline
       - uses: actions/upload-artifact@v4
         with:
           name: ApPdv-Setup-${{ steps.versao.outputs.valor }}
           path: |
             pdv/dist/installer/*.exe
             pdv/dist/installer/*.zip
+            pdv/dist/installer/*.sha256
           retention-days: 30
       - name: Publicar na Release
         if: startsWith(github.ref, 'refs/tags/pdv-v')
@@ -64,5 +68,6 @@ jobs:
           files: |
             pdv/dist/installer/*.exe
             pdv/dist/installer/*.zip
+            pdv/dist/installer/*.sha256
           name: ApPdv ${{ steps.versao.outputs.valor }}
           body: "PDV para Windows. ApPdv-Setup.exe instala no computador; ApPdv-Portatil.zip roda sem instalar (extraia e abra ApPdv.exe). Informe o endereço do servidor com https://."
