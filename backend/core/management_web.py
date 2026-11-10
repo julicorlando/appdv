@@ -126,9 +126,9 @@ def orcamento(request,empresa_id,pk):
     data=[]
     for line in obj.itens:
         p=Produto.objects.get(pk=line['produto'],empresa=m.empresa)
-        total=(p.preco_venda*Decimal(line['quantidade'])).quantize(Decimal('.01'))-Decimal(line['desconto'])
+        total=(p.preco_atual*Decimal(line['quantidade'])).quantize(Decimal('.01'))-Decimal(line['desconto'])
         current+=total
-        data.append(dict(line,atual=p.preco_venda,total_atual=total,endereco=p.endereco))
+        data.append(dict(line,atual=p.preco_atual,total_atual=total,endereco=p.endereco))
     principal(m.empresa)
     order=OrdemEntrega.objects.filter(orcamento=obj).first()
     frete=order.frete if order else ZERO
@@ -212,14 +212,15 @@ def caixas(request,empresa_id,pk=None):
             details=list(MovimentacaoCaixa.objects.filter(empresa=m.empresa,caixa=c).values('tipo','valor','motivo'))
             details+=list(Transacao.objects.filter(empresa=m.empresa,caixa=c).values('venda_id','tipo','meio','valor','troco'))
             details+=list(RecebimentoConta.objects.filter(empresa=m.empresa,caixa=c).values('conta_id','meio','valor','referencia'))
-    return screen(request,m,'Conferência de caixas',['Caixa','Operador','Abertura','Estado','Fundo','Dinheiro esperado','Contagem','Diferença'],rows,details=details)
+    fechar=qs.filter(estado='ABERTO').first() if pk else None
+    return screen(request,m,'Conferência de caixas',['Caixa','Operador','Abertura','Estado','Fundo','Dinheiro esperado','Contagem','Diferença'],rows,details=details,fechar_caixa=fechar)
 
 
 @login_required
 def sincronizacao(request,empresa_id):
     m=member(request,empresa_id)
-    rows=[dict(cells=[t.identificador,t.operador.username,t.ultimo_contato,'Sem contato recente' if t.ultimo_contato<timezone.now()-timedelta(seconds=90) else 'Online',t.pendentes,t.erros]) for t in TerminalPDV.objects.filter(empresa=m.empresa).select_related('operador')]
-    return screen(request,m,'Central de sincronização',['Terminal','Operador','Último contato','Conexão','Pendências','Motivos'],rows,note='Informações enviadas pelo aplicativo atualizado. Pendências locais só chegam ao painel quando o terminal consegue se conectar.')
+    rows=[dict(cells=[t.identificador,t.operador.username,t.versao or 'anterior a 0.3',t.ultimo_contato,'Sem contato recente' if t.ultimo_contato<timezone.now()-timedelta(seconds=90) else 'Online',t.pendentes,t.erros]) for t in TerminalPDV.objects.filter(empresa=m.empresa).select_related('operador')]
+    return screen(request,m,'Central de sincronização',['Terminal','Operador','Versão do PDV','Último contato','Conexão','Pendências','Motivos'],rows,note='Informações enviadas pelo aplicativo atualizado. Pendências locais só chegam ao painel quando o terminal consegue se conectar.')
 
 
 @login_required
