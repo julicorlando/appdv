@@ -68,7 +68,8 @@ class RejectedOfflineSaleTests(unittest.TestCase):
             discard_dialog.manager.setText('gerente')
             discard_dialog.password.setText('segredo')
             return QDialog.DialogCode.Accepted
-        with patch('app.pending.DiscardDialog.exec', autospec=True, side_effect=fill), \
+        # Função comum vira método: recebe o próprio diálogo como primeiro argumento.
+        with patch('app.pending.DiscardDialog.exec', new=fill), \
                 patch('app.pending.QMessageBox.information'):
             dialog._discard()
         args = api.descartar_venda_offline.call_args.args
