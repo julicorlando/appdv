@@ -64,8 +64,12 @@ def downloads_pdv():
     versoes = _versoes_pdv()
     terminais = list(TerminalPDV.objects.select_related("empresa").order_by("empresa__nome", "identificador")[:200])
     minima = _tupla_versao(versoes["versao_minima"])
+    from datetime import timedelta
+    limite_contato = timezone.now() - timedelta(hours=2)
     for terminal in terminais:
         terminal.desatualizado = _tupla_versao(terminal.versao) < minima
+        # Caixa que não fala com o servidor há mais de 2 h pode estar acumulando vendas offline.
+        terminal.sem_contato = terminal.ultimo_contato < limite_contato
     return {
         **versoes,
         "instalador_url": os.getenv("PDV_INSTALADOR_URL", f"{base}/download/ApPdv-Setup.exe"),
@@ -73,6 +77,7 @@ def downloads_pdv():
         "releases_url": base,
         "terminais": terminais,
         "desatualizados": sum(1 for t in terminais if t.desatualizado),
+        "sem_contato": sum(1 for t in terminais if t.sem_contato),
     }
 
 

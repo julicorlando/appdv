@@ -363,3 +363,40 @@ class MasterDownloadTests(Base):
         self.assertContains(resposta, "releases/latest/download/ApPdv-Portatil.zip")
         self.assertContains(resposta, "atualizar")
         self.assertEqual(resposta.context["pdv"]["desatualizados"], 1)
+
+
+class OfflineServidorTests(Base):
+    def test_catalogo_incremental_inclui_inativados(self):
+        antes = timezone.now()
+        outro = Produto.objects.create(empresa=self.company, categoria=self.category, codigo="P2", nome="Outro", preco_venda=5)
+        Produto.objects.filter(pk=self.product.pk).update(atualizado_em=antes - timedelta(hours=1))
+        outro.ativo = False
+        outro.save()
+        dados = self.api.get("/api/v1/produtos/", {"desde": antes.isoformat()}, **self.h).data
+        self.assertEqual([(p["codigo"], p["ativo"]) for p in dados], [("P2", False)])
+        self.assertEqual(self.api.get("/api/v1/produtos/", {"desde": "ontem"}, **self.h).status_code, 400)
+        self.assertEqual(len(self.api.get("/api/v1/produtos/", **self.h).data), 1)
+
+    def test_movimentacao_com_chave_nao_duplica(self):
+        from .models import MovimentacaoCaixa
+        caixa = self.caixa()
+        corpo = {"caixa": caixa, "tipo": "SUPRIMENTO", "valor": "50.00", "motivo": "Troco", "chave": str(uuid.uuid4())}
+        self.assertEqual(self.api.post("/api/v1/caixas/movimentacoes/", corpo, format="json", **self.h).status_code, 201)
+        self.assertEqual(self.api.post("/api/v1/caixas/movimentacoes/", corpo, format="json", **self.h).status_code, 200)
+        self.assertEqual(MovimentacaoCaixa.objects.count(), 1)
+
+    def test_fechamento_reenviado_e_idempotente(self):
+        caixa = self.caixa()
+        primeira = self.api.post(f"/api/v1/caixas/{caixa}/fechar/", {"saldo_fechamento": "0"}, format="json", **self.h)
+        segunda = self.api.post(f"/api/v1/caixas/{caixa}/fechar/", {"saldo_fechamento": "0"}, format="json", **self.h)
+        self.assertEqual((primeira.status_code, segunda.status_code), (200, 200))
+        self.assertTrue(segunda.data["ja_fechado"])
+
+    def test_limite_disponivel_e_prazo_offline(self):
+        from django.conf import settings
+        dados = self.api.get("/api/v1/clientes/cpf/", {"cpf": "52998224725"}, **self.h).data
+        self.assertEqual(dados["limite_disponivel"], "500.00")
+        self.assertEqual(self.api.get("/api/v1/clientes/", **self.h).data[0]["limite_disponivel"], "500.00")
+        versao = APIClient().get("/api/v1/pdv/versao/").data
+        self.assertEqual(versao["offline_dias"], 30)
+        self.assertEqual(settings.SIMPLE_JWT["REFRESH_TOKEN_LIFETIME"], timedelta(days=30))

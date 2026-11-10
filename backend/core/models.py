@@ -512,6 +512,8 @@ class MovimentacaoCaixa(models.Model):
     tipo = models.CharField(max_length=12, choices=Tipo.choices)
     valor = models.DecimalField(max_digits=12, decimal_places=2)
     motivo = models.CharField(max_length=250)
+    # Chave gerada pelo PDV: o reenvio de uma movimentação feita offline não duplica.
+    chave = models.UUIDField(null=True, blank=True, unique=True)
     criado_em = models.DateTimeField(auto_now_add=True)
 
     class Meta:

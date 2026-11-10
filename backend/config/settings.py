@@ -1,4 +1,5 @@
 import os
+from datetime import timedelta
 import sys
 from pathlib import Path
 
@@ -151,4 +152,11 @@ REST_FRAMEWORK = {
     # Com 1, o IP do cliente vem do X-Forwarded-For definido pelo proxy.
     "NUM_PROXIES": int(os.getenv("NUM_PROXIES", "1")) if os.getenv("NUM_PROXIES", "1").strip() else None,
 }
-SIMPLE_JWT = {"AUTH_HEADER_TYPES": ("Bearer",)}
+# PDV instalado: o acesso de renovação dura o mesmo prazo do login offline, para que o
+# caixa que ficou sem internet volte a sincronizar sem pedir a senha de novo.
+PDV_OFFLINE_DIAS = int(os.getenv("PDV_OFFLINE_DIAS", "30"))
+SIMPLE_JWT = {
+    "AUTH_HEADER_TYPES": ("Bearer",),
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=PDV_OFFLINE_DIAS),
+}

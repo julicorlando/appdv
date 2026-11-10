@@ -79,6 +79,14 @@ As operações protegidas exigem conexão com o servidor. Vendas que falham por 
 
 Todas as chamadas de negócio exigem JWT e `X-Empresa-ID`.
 
+## PDV 0.3.1: funcionamento sem internet
+
+- **Login offline por 30 dias:** depois de entrar online uma vez no computador, o operador entra sem internet com a mesma senha (o PDV guarda só uma verificação PBKDF2, nunca a senha). Cada login online renova o prazo (`PDV_OFFLINE_DIAS`).
+- **Caixa offline:** abertura, vendas, sangria/suprimento e fechamento ficam no banco local (SQLite) e sobem na ordem em que aconteceram. Sangrias reenviadas não duplicam (chave única) e o fechamento offline é calculado pelo servidor.
+- **Sincronização a cada 10 segundos nos dois sentidos:** sobem vendas e movimentos; descem só os produtos, preços, promoções e estoques alterados (`/api/v1/produtos/?desde=`), com carga completa a cada hora e na virada do dia.
+- **Indicador na tela** (online/offline há X min, quantas operações guardadas) e alerta no Painel Master para caixa sem contato há mais de 2 horas.
+- **Venda a prazo offline** só para cliente já sincronizado e até o limite disponível conhecido. PIX automático, NFC-e e pedidos web exigem conexão.
+
 ## Novidades da versão 0.3 (painel e PDV instalado)
 
 - **Produtos:** edição completa no painel (preço, inativação, foto, endereço), promoção com período (o preço promocional vale no PDV, no caixa web, em orçamentos e pedidos), dados fiscais (NCM, CEST, CFOP, CSOSN/CST, origem), etiquetas de preço com código de barras EAN-13 e geração de códigos internos, inativação dos produtos de teste.

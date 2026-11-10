@@ -19,9 +19,19 @@ def normalizar_cpf(valor):
     return cpf
 
 
+def limite_disponivel(cliente):
+    """Limite de crédito menos o que está em aberto (o PDV usa como teto da venda a prazo offline)."""
+    from django.db.models import Sum
+    from .models import ContaReceber
+    aberto = ContaReceber.objects.filter(empresa_id=cliente.empresa_id, cliente=cliente,
+                                         estado__in=("ABERTA", "PARCIAL")).aggregate(n=Sum("saldo"))["n"] or Decimal("0")
+    return max(cliente.limite_credito - aberto, Decimal("0")).quantize(Decimal("0.01"))
+
+
 def dados_cliente(cliente):
     return {'id': cliente.pk, 'nome': cliente.nome, 'documento': cliente.documento,
-            'telefone': cliente.telefone, 'limite_credito': str(cliente.limite_credito)}
+            'telefone': cliente.telefone, 'limite_credito': str(cliente.limite_credito),
+            'limite_disponivel': str(limite_disponivel(cliente))}
 
 
 def dados_orcamento(obj):

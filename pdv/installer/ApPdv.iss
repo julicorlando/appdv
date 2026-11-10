@@ -1,6 +1,6 @@
 ; A versão vem de pdv/app/__init__.py (build_windows.bat e o GitHub Actions passam /DAppVer=...).
 #ifndef AppVer
-  #define AppVer "0.3.0"
+  #define AppVer "0.3.1"
 #endif
 
 [Setup]
