@@ -751,3 +751,98 @@ class CobrancaPix(models.Model):
 
     class Meta:
         ordering = ('-criada_em',)
+
+
+# ------------------------------------------------------------------ cobrança da plataforma (master)
+
+class Plano(models.Model):
+    """Plano de assinatura: valor fixo mensal com caixas incluídos e valor por caixa adicional."""
+    nome = models.CharField(max_length=80)
+    descricao = models.CharField("Descrição", max_length=250, blank=True)
+    valor_mensal = models.DecimalField("Valor mensal (R$)", max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
+    caixas_incluidos = models.PositiveIntegerField("Caixas (PDV) incluídos", default=1)
+    valor_caixa_adicional = models.DecimalField("Valor por caixa adicional (R$)", max_digits=10, decimal_places=2, default=0, validators=[MinValueValidator(0)])
+    limite_usuarios = models.PositiveIntegerField("Limite de usuários (0 = sem limite)", default=0)
+    ativo = models.BooleanField(default=True)
+    ordem = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ("ordem", "valor_mensal")
+
+    def __str__(self):
+        return f"{self.nome} · R$ {self.valor_mensal:.2f}/mês"
+
+
+class ConfiguracaoMaster(models.Model):
+    """Configuração única da plataforma (recebimento e regras padrão de cobrança)."""
+    mp_access_token = models.CharField("Access token do Mercado Pago (recebimento do master)", max_length=300, blank=True)
+    dias_teste = models.PositiveIntegerField("Dias de teste grátis para empresas novas", default=15)
+    carencia_dias = models.PositiveIntegerField("Dias de carência após o vencimento", default=5)
+    dias_antecedencia = models.PositiveIntegerField("Gerar a fatura quantos dias antes do vencimento", default=10)
+    plano_padrao = models.ForeignKey(Plano, null=True, blank=True, on_delete=models.SET_NULL, verbose_name="Plano padrão de empresas novas")
+    atualizado_em = models.DateTimeField(auto_now=True)
+
+    @classmethod
+    def atual(cls):
+        return cls.objects.order_by("pk").first() or cls.objects.create()
+
+
+class Assinatura(models.Model):
+    class Estado(models.TextChoices):
+        TESTE = "TESTE", "Teste grátis"
+        ATIVA = "ATIVA", "Em dia"
+        ATRASADA = "ATRASADA", "Fatura vencida (em carência)"
+        SUSPENSA = "SUSPENSA", "Suspensa por falta de pagamento"
+        ISENTA = "ISENTA", "Isenta"
+        CANCELADA = "CANCELADA", "Cancelada"
+
+    empresa = models.OneToOneField(Empresa, on_delete=models.CASCADE, related_name="assinatura")
+    plano = models.ForeignKey(Plano, null=True, blank=True, on_delete=models.PROTECT)
+    estado = models.CharField(max_length=10, choices=Estado.choices, default=Estado.TESTE, db_index=True)
+    teste_ate = models.DateField("Teste grátis até", null=True, blank=True)
+    isenta = models.BooleanField("Isenta de cobrança", default=False)
+    isencao_ate = models.DateField("Isenta até (em branco = sem prazo)", null=True, blank=True)
+    motivo_isencao = models.CharField("Motivo da isenção", max_length=200, blank=True)
+    dia_vencimento = models.PositiveSmallIntegerField("Dia do vencimento", default=10)
+    carencia_dias = models.PositiveIntegerField("Carência (dias)", null=True, blank=True, help_text="Em branco usa o padrão da plataforma.")
+    valor_especial = models.DecimalField("Valor mensal especial (R$)", max_digits=10, decimal_places=2, null=True, blank=True,
+                                         validators=[MinValueValidator(0)], help_text="Substitui o valor do plano (caixas adicionais continuam somando).")
+    desconto_percentual = models.DecimalField("Desconto (%)", max_digits=5, decimal_places=2, default=0, validators=[MinValueValidator(0)])
+    observacao = models.CharField("Observação interna", max_length=250, blank=True)
+    suspensa_em = models.DateField(null=True, blank=True)
+    criado_em = models.DateTimeField(auto_now_add=True)
+    atualizado_em = models.DateTimeField(auto_now=True)
+
+    def isencao_vigente(self, hoje):
+        return self.isenta and (self.isencao_ate is None or hoje <= self.isencao_ate)
+
+    @property
+    def bloqueada(self):
+        return self.estado == self.Estado.SUSPENSA
+
+
+class Fatura(models.Model):
+    class Estado(models.TextChoices):
+        ABERTA = "ABERTA", "Em aberto"
+        VENCIDA = "VENCIDA", "Vencida"
+        PAGA = "PAGA", "Paga"
+        CANCELADA = "CANCELADA", "Cancelada"
+
+    empresa = models.ForeignKey(Empresa, on_delete=models.CASCADE, related_name="faturas")
+    competencia = models.DateField(help_text="Primeiro dia do mês cobrado.")
+    descricao = models.CharField(max_length=200)
+    itens = models.JSONField(default=list)
+    valor = models.DecimalField(max_digits=10, decimal_places=2)
+    vencimento = models.DateField()
+    estado = models.CharField(max_length=10, choices=Estado.choices, default=Estado.ABERTA, db_index=True)
+    paga_em = models.DateTimeField(null=True, blank=True)
+    meio = models.CharField(max_length=20, blank=True)
+    mp_preference_id = models.CharField(max_length=80, blank=True)
+    mp_payment_id = models.CharField(max_length=40, blank=True, db_index=True)
+    link_pagamento = models.URLField(max_length=500, blank=True)
+    observacao = models.CharField(max_length=250, blank=True)
+    criada_em = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-vencimento", "-pk")
+        constraints = [models.UniqueConstraint(fields=("empresa", "competencia"), name="fatura_unica_por_competencia")]

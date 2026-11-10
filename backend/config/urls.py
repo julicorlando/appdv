@@ -10,6 +10,7 @@ from core.api import (
 from core.api import ClienteCPFView, OrcamentosView, AutorizarDescontoView, TerminalHeartbeatView, DescartarVendaOfflineView, LoginView
 from core.api import AlterarSenhaView, PixCobrancaDetalheView, PixCobrancaView, PixWebhookView, VersaoPdvView
 from core import extras_web as extras
+from core import cobranca_web
 from core.desktop_sessions import DesktopSessionView, iniciar_sessao_desktop
 from core import management_web as management
 from core import web
@@ -27,6 +28,16 @@ urlpatterns = [
     path("accounts/login/", web.LoginWebView.as_view(), name="login"),
     path("accounts/logout/", auth_views.LogoutView.as_view(), name="logout"),
     path("master/", web.master_dashboard, name="master"),
+    path("master/cobranca/", cobranca_web.master_cobranca, name="master-cobranca"),
+    path("master/cobranca/configuracao/", cobranca_web.master_configuracao, name="master-cobranca-config"),
+    path("master/cobranca/planos/", cobranca_web.master_plano, name="master-plano"),
+    path("master/empresas/<int:empresa_id>/assinatura/", cobranca_web.master_assinatura, name="master-assinatura"),
+    path("master/empresas/<int:empresa_id>/entrar/", cobranca_web.master_entrar, name="master-entrar"),
+    path("master/sair-da-empresa/", cobranca_web.master_sair_empresa, name="master-sair-empresa"),
+    path("empresa/<int:empresa_id>/assinatura/", cobranca_web.empresa_assinatura, name="empresa-assinatura"),
+    path("empresa/<int:empresa_id>/assinatura/faturas/<int:fatura_id>/pagar/", cobranca_web.empresa_assinatura_pagar, name="empresa-assinatura-pagar"),
+    path("empresa/<int:empresa_id>/assinatura/faturas/<int:fatura_id>/verificar/", cobranca_web.empresa_assinatura_verificar, name="empresa-assinatura-verificar"),
+    path("api/v1/cobranca/webhook/", cobranca_web.webhook, name="cobranca-webhook"),
     path("master/empresas/criar/", web.master_criar_empresa, name="master-criar-empresa"),
     path("master/usuarios/criar/", web.master_criar_usuario, name="master-criar-usuario"),
     path("master/empresas/<int:empresa_id>/status/", web.master_status_empresa, name="master-status-empresa"),

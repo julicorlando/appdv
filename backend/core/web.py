@@ -41,7 +41,7 @@ def home(request):
 def master_dashboard(request):
     if not request.user.is_superuser:
         raise PermissionDenied("Acesso exclusivo ao painel Master.")
-    empresas = Empresa.objects.annotate(
+    empresas = Empresa.objects.select_related("assinatura", "assinatura__plano").annotate(
         total_membros=Count("membros", distinct=True),
         total_produtos=Count("produtos", distinct=True),
     ).order_by("nome")
@@ -113,7 +113,10 @@ def master_criar_empresa(request):
         MembroEmpresa.objects.create(
             empresa=empresa, usuario=user, papel=MembroEmpresa.Papel.ADMIN
         )
-    messages.success(request, f"Empresa {empresa.nome} e usuário administrador criados.")
+        from . import cobranca
+        assinatura = cobranca.garantir_assinatura(empresa)
+    messages.success(request, f"Empresa {empresa.nome} e usuário administrador criados"
+                     + (f" · teste grátis até {assinatura.teste_ate:%d/%m/%Y}." if assinatura.teste_ate else "."))
     return redirect("master")
 
 
@@ -151,12 +154,32 @@ def master_adicionar_membro(request, empresa_id):
     return redirect("master")
 
 
+class AssinaturaSuspensa(PermissionDenied):
+    """Empresa bloqueada por falta de pagamento: o middleware leva para a tela de Assinatura."""
+
+    def __init__(self, empresa_id, mensagem):
+        super().__init__(mensagem)
+        self.empresa_id = empresa_id
+
+
+# Telas que continuam abertas com a empresa suspensa (para pagar e sair).
+TELAS_LIBERADAS_SUSPENSAO = {"empresa-assinatura", "empresa-assinatura-pagar", "empresa-assinatura-verificar"}
+
+
 def require_membership(request, empresa_id, papeis=None):
     if not request.user.is_authenticated:
         raise PermissionDenied("Faça login.")
     from .access import conta_ativa
     if not conta_ativa(request.user):
         raise PermissionDenied("Conta desativada.")
+    from . import cobranca
+    cobranca.processar_se_preciso()
+    if request.user.is_superuser and str(request.session.get("master_empresa")) == str(empresa_id):
+        # Master dentro da empresa: acesso de administrador, sem bloqueio, registrado na auditoria ao entrar.
+        empresa = Empresa.objects.filter(pk=empresa_id).first()
+        if empresa is None:
+            raise PermissionDenied("Empresa não encontrada.")
+        return MembroEmpresa(empresa=empresa, usuario=request.user, papel=MembroEmpresa.Papel.ADMIN, ativo=True)
     try:
         membro = MembroEmpresa.objects.select_related("empresa").get(
             empresa_id=empresa_id, usuario=request.user, ativo=True,
@@ -164,6 +187,10 @@ def require_membership(request, empresa_id, papeis=None):
         )
     except MembroEmpresa.DoesNotExist:
         raise PermissionDenied("Você não possui acesso a esta empresa.")
+    tela = getattr(getattr(request, "resolver_match", None), "url_name", "")
+    mensagem = cobranca.bloqueio(membro.empresa)
+    if mensagem and tela not in TELAS_LIBERADAS_SUSPENSAO:
+        raise AssinaturaSuspensa(membro.empresa_id, mensagem)
     if papeis and membro.papel not in papeis:
         raise PermissionDenied("Seu perfil não permite esta ação.")
     return membro

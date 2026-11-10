@@ -30,6 +30,15 @@ def _checar_conta(usuario):
         raise PermissionDenied("Conta desativada.")
 
 
+def _checar_assinatura(empresa):
+    """PDV e integrações param quando a empresa está suspensa (as vendas offline ficam guardadas no PC)."""
+    from . import cobranca
+    cobranca.processar_se_preciso()
+    mensagem = cobranca.bloqueio(empresa)
+    if mensagem:
+        raise PermissionDenied(mensagem)
+
+
 class TenantAPIView(APIView):
     permission_classes = [IsAuthenticated]
     def get_empresa(self, request):
@@ -43,6 +52,7 @@ class TenantAPIView(APIView):
             )
         except (MembroEmpresa.DoesNotExist, ValueError):
             raise PermissionDenied("Acesso negado a esta empresa.")
+        _checar_assinatura(membro.empresa)
         return membro.empresa, membro
 
 
@@ -120,6 +130,7 @@ class TenantViewSet(viewsets.ReadOnlyModelViewSet):
             )
         except (MembroEmpresa.DoesNotExist, ValueError):
             raise PermissionDenied("Acesso negado a esta empresa.")
+        _checar_assinatura(membro.empresa)
         return membro.empresa
 
 
