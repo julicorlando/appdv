@@ -44,6 +44,10 @@ def _gestor(request, empresa_id):
 # ---------------------------------------------------------------- produtos
 
 class ProdutoEdicaoForm(forms.ModelForm):
+    # Aceitam pontuação ("1234.56.78"); os dígitos são extraídos em clean_*.
+    ncm = forms.CharField(label="NCM", required=False, max_length=12, help_text="8 dígitos, obrigatório para NFC-e.")
+    cest = forms.CharField(label="CEST", required=False, max_length=10)
+
     class Meta:
         model = Produto
         fields = ("categoria", "codigo", "codigo_barras", "nome", "unidade", "unidade_estoque", "fator_conversao",
@@ -185,6 +189,8 @@ def etiquetas(request, empresa_id):
 # ------------------------------------------------------- fornecedores e despesas
 
 class FornecedorForm(forms.ModelForm):
+    cnpj = forms.CharField(label="CNPJ", required=False, max_length=20)
+
     class Meta:
         model = Fornecedor
         fields = ("nome", "cnpj", "email", "telefone", "ativo")
@@ -524,7 +530,7 @@ def equipe_redefinir_senha(request, empresa_id):
                 raise DjangoValidationError("A senha do administrador master só pode ser alterada por ele.")
             alvo.usuario.set_password(senha)
             alvo.usuario.save(update_fields=["password"])
-            audit(membro.empresa, request.user, "SENHA_REDEFINIDA_PELO_ADMIN", alvo.usuario.pk, usuario=alvo.usuario.username)
+            audit(membro.empresa, request.user, "SENHA_REDEFINIDA_PELO_ADMIN", alvo.usuario.pk, login=alvo.usuario.username)
             messages.success(request, f"Senha provisória definida para {alvo.usuario.username}. Peça para trocá-la no primeiro acesso.")
         except MembroEmpresa.DoesNotExist:
             messages.error(request, "Membro não encontrado nesta empresa.")
