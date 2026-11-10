@@ -22,6 +22,8 @@ jobs:
         run: python manage.py makemigrations --check --dry-run
         env:
           DEBUG: "True"
+      - name: Arquivos estáticos (os templates usam o manifesto)
+        run: python manage.py collectstatic --noinput
       - name: Testes do backend
         run: python manage.py test core -v 2
 
