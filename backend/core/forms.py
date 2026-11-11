@@ -91,7 +91,7 @@ class EmpresaLogoForm(forms.ModelForm):
     class Meta:
         model = Empresa
         fields = ("nome", "razao_social", "cnpj", "inscricao_estadual", "regime_tributario", "logradouro", "numero", "complemento", "bairro", "municipio", "codigo_municipio", "uf", "cep", "telefone", "email", "ambiente_fiscal", "provedor_fiscal", "logo", "frete_padrao",
-                  "pis_cofins_cst", "nfce_automatica", "focus_token", "mp_access_token")
+                  "pis_cofins_cst", "nfce_automatica", "focus_token", "mp_access_token", "mp_point_dispositivo")
         labels = {"frete_padrao": "Frete padrão para entrega (R$)"}
         widgets = {
             "logo": forms.ClearableFileInput(attrs={"accept": "image/png,image/jpeg,image/webp"}),
@@ -102,6 +102,7 @@ class EmpresaLogoForm(forms.ModelForm):
             "focus_token": "Token da empresa no painel da Focus NFe. Deixe em branco para manter o atual; digite REMOVER para apagar.",
             "mp_access_token": "Access token de produção do Mercado Pago. Deixe em branco para manter o atual; digite REMOVER para apagar.",
             "provedor_fiscal": "Emissão integrada: Focus NFe.",
+            "mp_point_dispositivo": "Maquininha Point vinculada à mesma conta do Mercado Pago. Use \"Listar maquininhas\" abaixo para ver o ID.",
         }
 
     def _token(self, campo):
