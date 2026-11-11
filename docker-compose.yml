@@ -34,12 +34,22 @@ services:
       EMAIL_HOST_USER: ${EMAIL_HOST_USER:-}
       EMAIL_HOST_PASSWORD: ${EMAIL_HOST_PASSWORD:-}
       DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL:-}
+      EMAIL_USE_TLS: ${EMAIL_USE_TLS:-True}
       # PDV instalado: versão mínima aceita e link do instalador mais recente.
       PDV_VERSAO_MINIMA: ${PDV_VERSAO_MINIMA:-0.3.0}
-      PDV_VERSAO_ATUAL: ${PDV_VERSAO_ATUAL:-0.3.3}
+      PDV_VERSAO_ATUAL: ${PDV_VERSAO_ATUAL:-0.4.0}
       PDV_OFFLINE_DIAS: ${PDV_OFFLINE_DIAS:-30}
       PDV_DOWNLOAD_URL: ${PDV_DOWNLOAD_URL:-https://github.com/julicorlando/appdv/releases/latest}
       BACKUP_MANTER: ${BACKUP_MANTER:-14}
+      # Cópia externa do backup diário (S3 compatível: Backblaze B2, Cloudflare R2, AWS S3, Wasabi). Opcional.
+      BACKUP_S3_ENDPOINT: ${BACKUP_S3_ENDPOINT:-}
+      BACKUP_S3_BUCKET: ${BACKUP_S3_BUCKET:-}
+      BACKUP_S3_REGION: ${BACKUP_S3_REGION:-us-east-1}
+      BACKUP_S3_ACCESS_KEY: ${BACKUP_S3_ACCESS_KEY:-}
+      BACKUP_S3_SECRET_KEY: ${BACKUP_S3_SECRET_KEY:-}
+      BACKUP_S3_PREFIX: ${BACKUP_S3_PREFIX:-appdv/}
+      # Endereço público usado nos links dos e-mails de cobrança (padrão: primeira origem do CSRF).
+      SITE_URL: ${SITE_URL:-}
     expose:
       - "8000"
     volumes:
