@@ -14,6 +14,8 @@ from django.http import Http404, HttpResponse, HttpResponseNotAllowed
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.utils.text import slugify
+from rest_framework.exceptions import ValidationError
+from .access import mensagem_erro
 from .forms import CategoriaSimpleForm, EmpresaForm, EmpresaLogoForm, MembroForm, ProdutoForm
 from .inventory import concluir_contagem, gerar_contagens_aleatorias, importar_planilha, iniciar_contagem
 from .purchases import confirmar_recebimento, criar_compra_manual, importar_nfe
@@ -163,7 +165,8 @@ class AssinaturaSuspensa(PermissionDenied):
 
 
 # Telas que continuam abertas com a empresa suspensa (para pagar e sair).
-TELAS_LIBERADAS_SUSPENSAO = {"empresa-assinatura", "empresa-assinatura-pagar", "empresa-assinatura-verificar"}
+TELAS_LIBERADAS_SUSPENSAO = {"empresa-assinatura", "empresa-assinatura-pagar", "empresa-assinatura-verificar",
+                             "empresa-assinatura-acao"}
 
 
 def require_membership(request, empresa_id, papeis=None):
@@ -255,8 +258,16 @@ def empresa_configuracao(request, empresa_id):
                 form.fields.pop(campo)
     if request.method == "POST":
         if form.is_valid():
-            form.save()
+            anterior = Empresa.objects.filter(pk=membro.empresa.pk).values_list("mp_point_dispositivo", flat=True).first()
+            empresa = form.save()
             messages.success(request, "Configurações da empresa atualizadas.")
+            if empresa.mp_point_dispositivo and empresa.mp_point_dispositivo != anterior:
+                from . import point_mp
+                try:
+                    point_mp.ativar_modo_pdv(empresa)
+                    messages.info(request, "Maquininha vinculada. Se ela estava em outro modo, reinicie-a para entrar no modo PDV.")
+                except ValidationError as exc:
+                    messages.warning(request, mensagem_erro(exc))
             return redirect("empresa-configuracao", empresa_id=empresa_id)
         messages.error(request, "Confira os campos da configuração.")
     logo_preview = ""
@@ -265,9 +276,16 @@ def empresa_configuracao(request, empresa_id):
             encoded = base64.b64encode(arquivo.read()).decode("ascii")
         media_type = mimetypes.guess_type(membro.empresa.logo.name)[0] or "image/png"
         logo_preview = f"data:{media_type};base64,{encoded}"
+    maquininhas = None
+    if request.GET.get("maquininhas") and membro.papel == MembroEmpresa.Papel.ADMIN:
+        from . import point_mp
+        try:
+            maquininhas = point_mp.dispositivos(membro.empresa)
+        except ValidationError as exc:
+            messages.error(request, mensagem_erro(exc))
     return render(request, "empresa_configuracao.html", {
         "membro": membro, "empresa": membro.empresa, "form": form,
-        "logo_preview": logo_preview,
+        "logo_preview": logo_preview, "maquininhas": maquininhas,
     })
 
 
