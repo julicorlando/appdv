@@ -10,6 +10,9 @@
 <p>O frete padrão vale para novos pedidos com entrega. Retirada não cobra frete.</p>
 <button type="submit">Salvar configurações</button>
 </form>
+{% if membro.papel == 'ADMIN' %}<h3>Maquininha Mercado Pago Point</h3><p>Com a maquininha vinculada, o PDV envia o valor do cartão direto para ela e a venda só fecha com o pagamento aprovado. {% if empresa.mp_point_dispositivo %}Vinculada: <code>{{ empresa.mp_point_dispositivo }}</code>.{% endif %}</p>
+{% if empresa.mp_access_token %}<p><a class="secondary" href="?maquininhas=1">Listar maquininhas da conta</a></p>{% else %}<p class="hint">Informe primeiro o access token do Mercado Pago.</p>{% endif %}
+{% if maquininhas is not None %}<table><thead><tr><th>ID do dispositivo</th><th>Modo</th></tr></thead><tbody>{% for m in maquininhas %}<tr><td><code>{{ m.id }}</code></td><td>{{ m.operating_mode|default:"—" }}</td></tr>{% empty %}<tr><td colspan="2">Nenhuma maquininha Point encontrada nesta conta.</td></tr>{% endfor %}</tbody></table><p class="hint">Copie o ID para o campo "Maquininha Mercado Pago Point" e salve.</p>{% endif %}{% endif %}
 <p>A NFC-e é emitida pela Focus NFe: o certificado digital A1 e o CSC ficam no painel da Focus, não aqui. Comece em homologação e só mude para produção depois de testar. O PIX automático usa o access token do Mercado Pago.</p>
 </section>
 {% endblock %}

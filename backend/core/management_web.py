@@ -326,11 +326,15 @@ def equipe(request,empresa_id):
                 if request.POST.get('membro'):
                     target=MembroEmpresa.objects.select_for_update().get(pk=request.POST['membro'],empresa=m.empresa)
                     active=request.POST.get('ativo')=='on'
+                    if active and not target.ativo and not request.user.is_superuser:
+                        _limite_usuarios(m.empresa)
                     if target.usuario_id==request.user.pk and (not active or role!='ADMIN'):raise ValueError('Seu próprio acesso administrativo deve ser preservado.')
                     if target.papel=='ADMIN' and (not active or role!='ADMIN') and not MembroEmpresa.objects.filter(empresa=m.empresa,papel='ADMIN',ativo=True).exclude(pk=target.pk).exists():raise ValueError('Mantenha ao menos um administrador ativo.')
                     target.papel=role;target.ativo=active;target.save(update_fields=['papel','ativo'])
                     audit(m.empresa,request.user,'MEMBRO_ATUALIZADO',target.pk,papel=role,ativo=active)
                 else:
+                    if not request.user.is_superuser:
+                        _limite_usuarios(m.empresa)
                     username=request.POST.get('username','').strip()
                     password=request.POST.get('senha','')
                     if not username or len(username)>150:raise ValueError('Informe um usuário válido.')
@@ -344,3 +348,13 @@ def equipe(request,empresa_id):
         except Exception as exc:messages.error(request,str(exc))
         return redirect('gestao-equipe',empresa_id=empresa_id)
     return render(request,'gestao_equipe.html',dict(empresa=m.empresa,membro=m,membros=MembroEmpresa.objects.filter(empresa=m.empresa).select_related('usuario')))
+
+
+def _limite_usuarios(empresa):
+    from rest_framework.exceptions import ValidationError as ErroDRF
+    from . import cobranca
+    from .access import mensagem_erro
+    try:
+        cobranca.validar_novo_usuario(empresa)
+    except ErroDRF as exc:
+        raise ValueError(mensagem_erro(exc))

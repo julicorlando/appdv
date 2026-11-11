@@ -36,7 +36,12 @@ def _checar_assinatura(empresa):
     cobranca.processar_se_preciso()
     mensagem = cobranca.bloqueio(empresa)
     if mensagem:
-        raise PermissionDenied(mensagem)
+        raise AssinaturaSuspensaAPI({"detail": mensagem, "codigo": "assinatura_suspensa"})
+
+
+class AssinaturaSuspensaAPI(PermissionDenied):
+    """403 com código próprio: o PDV mostra o aviso de suspensão em vez de tratar como queda de rede."""
+    default_code = "assinatura_suspensa"
 
 
 class TenantAPIView(APIView):
@@ -73,6 +78,7 @@ class EmpresaInfoView(TenantAPIView):
             "endereco_documento": empresa.endereco_documento,
             "logo_data_url": logo_data_url,
             "pix_configurado": bool(empresa.mp_access_token),
+            "point_configurado": bool(empresa.mp_access_token and empresa.mp_point_dispositivo),
             "nfce_configurada": bool(empresa.focus_token),
             "nfce_automatica": bool(empresa.focus_token and empresa.nfce_automatica),
         })
@@ -779,6 +785,8 @@ class TerminalHeartbeatView(TenantAPIView):
             count=int(request.data.get('pendentes',0))
             if not name or not 0<=count<=100000:raise ValueError
         except (ValueError,TypeError):raise ValidationError('Terminal ou quantidade inválidos.')
+        from . import cobranca
+        cobranca.validar_terminal(empresa,name)
         TerminalPDV.objects.update_or_create(empresa=empresa,identificador=name,defaults={'operador':request.user,'pendentes':count,'erros':str(request.data.get('erros',''))[:2000],'versao':str(request.data.get('versao',''))[:20]})
         return Response({'ok':True,**_versoes_pdv()})
 
@@ -846,7 +854,7 @@ class LoginView(TokenObtainPairView):
 def _versoes_pdv():
     import os
     from django.conf import settings as _settings
-    atual = os.getenv("PDV_VERSAO_ATUAL", "0.3.3")
+    atual = os.getenv("PDV_VERSAO_ATUAL", "0.4.0")
     # Instalador da versão anunciada (o PDV confere o .sha256 publicado junto antes de instalar).
     instalador = os.getenv("PDV_INSTALADOR_URL",
                            f"https://github.com/julicorlando/appdv/releases/download/pdv-v{atual}/ApPdv-Setup.exe")
@@ -918,6 +926,39 @@ class PixCobrancaDetalheView(TenantAPIView):
         except CobrancaPix.DoesNotExist:
             raise ValidationError({"pix": "Cobrança não encontrada."})
         return Response(pix_mp.resumo(pix_mp.atualizar(cobranca)))
+
+
+class PointCobrancaView(TenantAPIView):
+    """Cobrança na maquininha Mercado Pago Point (o PDV consulta até aprovar)."""
+    def post(self, request):
+        from . import point_mp
+        empresa, membro = self.get_empresa(request)
+        dados = point_mp.criar(empresa, request.data.get("valor"), str(request.data.get("tipo", "")).upper(), request.data.get("chave"))
+        return Response(dados, status=status.HTTP_201_CREATED)
+
+    def get(self, request):
+        from . import point_mp
+        empresa, membro = self.get_empresa(request)
+        return Response({"configurado": point_mp.configurado(empresa)})
+
+
+class PointCobrancaDetalheView(TenantAPIView):
+    def get(self, request, intencao_id):
+        from . import point_mp
+        empresa, membro = self.get_empresa(request)
+        return Response(point_mp.consultar(empresa, _intencao(intencao_id)))
+
+    def delete(self, request, intencao_id):
+        from . import point_mp
+        empresa, membro = self.get_empresa(request)
+        return Response(point_mp.cancelar(empresa, _intencao(intencao_id)))
+
+
+def _intencao(valor):
+    valor = str(valor)
+    if not (0 < len(valor) <= 80) or not all(c.isalnum() or c in "-_" for c in valor):
+        raise ValidationError({"point": "Cobrança inválida."})
+    return valor
 
 
 class PixWebhookView(APIView):

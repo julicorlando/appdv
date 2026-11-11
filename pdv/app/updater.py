@@ -36,6 +36,28 @@ def instalado():
     return any(Path(sys.executable).parent.glob("unins*.exe"))
 
 
+def backup_dados_locais(banco, manter=5):
+    """Cópia consistente do banco local (vendas guardadas, caixa, catálogo) antes de atualizar.
+
+    Fica em <pasta de dados>/backups/pdv-AAAAMMDD-HHMMSS.sqlite3; só as `manter` mais recentes são guardadas.
+    """
+    import sqlite3
+    from datetime import datetime
+    origem = Path(banco)
+    pasta = origem.parent / "backups"
+    pasta.mkdir(parents=True, exist_ok=True)
+    destino = pasta / f"pdv-{datetime.now():%Y%m%d-%H%M%S}.sqlite3"
+    fonte, copia = sqlite3.connect(str(origem)), sqlite3.connect(str(destino))
+    try:
+        fonte.backup(copia)
+    finally:
+        copia.close()
+        fonte.close()
+    for antiga in sorted(pasta.glob("pdv-*.sqlite3"))[:-max(1, manter)]:
+        antiga.unlink(missing_ok=True)
+    return destino
+
+
 def iniciar_instalador(caminho):
     """Instalação silenciosa em segundo plano; o ApPdv deve fechar logo em seguida."""
     flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)

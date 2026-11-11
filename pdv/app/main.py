@@ -28,6 +28,8 @@ from app.payments import PaymentDialog
 from app.quotes import quote_html
 from app.discounts import distribute_discount
 from app.customers import normalize_cpf
+from app import perifericos
+from app.assinatura import EstadoSuspensao, codigo_erro, mensagem_erro as mensagem_assinatura
 
 
 def asset_path(name):
@@ -183,6 +185,7 @@ class PendingSyncWorker(QThread):
     catalog_changed = Signal()
     connection = Signal(bool, str)
     auth_updated = Signal(str, str)
+    account_notice = Signal(str, str)  # assinatura_suspensa | limite_caixas | "" (tudo certo)
 
     def __init__(self, api, rows, parent=None, store=None, tenant_id=None, operator=None):
         super().__init__(parent)
@@ -299,6 +302,10 @@ class PendingSyncWorker(QThread):
                 self.result.emit(key, str(exc), None)
             except requests.HTTPError as exc:
                 errors.append(f'{key[:8]}: {exc}')
+                if codigo_erro(exc) == 'assinatura_suspensa':
+                    self.account_notice.emit('assinatura_suspensa', mensagem_assinatura(exc))
+                    self.result.emit(key, 'Assinatura suspensa: a venda fica guardada neste PC.', None)
+                    break
                 if is_permanent_rejection(exc):
                     self.rejected.emit(key, str(exc))
                 else:
@@ -311,10 +318,14 @@ class PendingSyncWorker(QThread):
                 self._sync_catalog()
             self.client.heartbeat(pending, '\n'.join(errors))
             self.connection.emit(True, '')
+            self.account_notice.emit('', '')
         except (requests.ConnectionError, requests.Timeout):
             self.connection.emit(False, 'Sem conexão; nova tentativa automática.')
-        except requests.RequestException:
-            pass
+        except requests.RequestException as exc:
+            codigo = codigo_erro(exc)
+            if codigo:
+                self.connection.emit(True, '')
+                self.account_notice.emit(codigo, mensagem_assinatura(exc))
         auth = self.client.session.headers.get('Authorization', '')
         refresh = self.client.refresh_token
         if isinstance(auth, str) and auth:
@@ -361,6 +372,10 @@ class PDVWindow(QMainWindow):
         self.current_product = None
         self.company_roles = {}
         self.tenant_role = "CAIXA"
+        self.settings = QSettings("ApPdv", "PDV")
+        self.suspensao = EstadoSuspensao(self.settings)
+        self.perifericos = perifericos.carregar(self.settings)
+        self.nfce_pos_sync = []
         self.setWindowTitle(f"ApPdv {VERSION} — Frente de Caixa")
         self.setWindowIcon(QIcon(asset_path("appdv-icon-256.png")))
         self.resize(1120, 740)
@@ -454,6 +469,10 @@ class PDVWindow(QMainWindow):
         header.addWidget(self.update_button)
         self.update_info = None
         self.update_worker = None
+        self.devices_button = QPushButton("Periféricos")
+        self.devices_button.setToolTip("Gaveta de dinheiro, balança e etiqueta de balança deste computador.")
+        self.devices_button.clicked.connect(self._configure_devices)
+        header.addWidget(self.devices_button)
         self.logout_button = QPushButton("Sair")
         self.logout_button.setToolTip("Encerra a sessão deste operador e volta para a tela de login.")
         self.logout_button.clicked.connect(self._logout)
@@ -461,6 +480,12 @@ class PDVWindow(QMainWindow):
         layout.addLayout(header)
         # F11 alterna a tela cheia (útil para acessar outras janelas do Windows).
         QShortcut(QKeySequence(Qt.Key.Key_F11), self, activated=self._toggle_fullscreen)
+
+        # Faixa de aviso da assinatura do ApPdv (suspensa / limite do plano).
+        self.account_banner = QLabel()
+        self.account_banner.setWordWrap(True)
+        self.account_banner.hide()
+        layout.addWidget(self.account_banner)
 
         self.product_banner = QLabel("Leia um código de barras ou pesquise um produto")
         self.product_banner.setObjectName("productName")
@@ -576,10 +601,13 @@ class PDVWindow(QMainWindow):
         self.nfce_button = QPushButton("NFC-e da última venda")
         self.nfce_button.clicked.connect(self._nfce_last_sale)
         self.nfce_button.setVisible(False)
+        self.nfce_offline_button = QPushButton("NFC-e das vendas offline")
+        self.nfce_offline_button.clicked.connect(self._show_offline_nfce)
+        self.nfce_offline_button.setVisible(False)
         self.password_button = QPushButton("Trocar senha")
         self.password_button.clicked.connect(self._change_password)
         self.last_sale_id = None
-        for button in (self.pay, self.quote, self.find_quote, self.web_order, self.web_orders, self.cash_move, self.close_cash, self.cancel_sale, self.open_cash_button, self.nfce_button, self.admin_button, self.password_button):
+        for button in (self.pay, self.quote, self.find_quote, self.web_order, self.web_orders, self.cash_move, self.close_cash, self.cancel_sale, self.open_cash_button, self.nfce_button, self.nfce_offline_button, self.admin_button, self.password_button):
             actions.addWidget(button)
         layout.addLayout(actions)
 
@@ -634,6 +662,7 @@ class PDVWindow(QMainWindow):
         except Exception:
             self.company_info = self.store.company(self.tenant_id) or {"nome": self.company.currentText(), "logo_data_url": ""}
         self._update_company_logo()
+        self._render_account_banner()
         self.cart.clear()
         self.cash_id = None
         if self.tenant_role in ('ADMIN','GERENTE'):
@@ -746,6 +775,8 @@ class PDVWindow(QMainWindow):
             minutos = int((time.time() - (self.offline_since or time.time())) // 60)
             texto = f"● Offline há {minutos} min" if minutos else '● Offline'
             texto += f' · {pendentes} guardada(s) neste PC' if pendentes else ''
+            if pendentes and minutos >= 20 * 60 and self.company_info.get('nfce_automatica'):
+                texto += ' · ⚠ conecte o caixa: NFC-e devem ser transmitidas em até 24 h'
             cor = '#c62828'
         self.connection_label.setText(texto)
         self.connection_label.setStyleSheet(f'color: {cor}; font-weight: 700;')
@@ -764,7 +795,9 @@ class PDVWindow(QMainWindow):
             cursor = max((p.get('atualizado_em') or '' for p in self.products), default='')
             self.store.save_sync_state(self.tenant_id, cursor, time.time(), datetime.now().strftime('%Y-%m-%d'))
             self.status.setText("Catálogo atualizado · online")
-        except Exception:
+        except Exception as exc:
+            if codigo_erro(exc):
+                self._account_notice(codigo_erro(exc), mensagem_assinatura(exc))
             self._set_online(False)
             self.products = self.store.list_products(self.tenant_id)
             self.status.setText("Offline · catálogo neste computador")
@@ -787,6 +820,20 @@ class PDVWindow(QMainWindow):
     def _add_by_code(self):
         query = self.query.text().strip().lower()
         if not query:
+            return
+        etiqueta = perifericos.ler_etiqueta(query, self.perifericos)
+        if etiqueta:
+            product = perifericos.produto_da_etiqueta(self.products, etiqueta)
+            if product is None:
+                QMessageBox.information(self, "Etiqueta de balança", f"Nenhum produto com o código {etiqueta['codigo']} da etiqueta.")
+                return
+            try:
+                quantity = perifericos.quantidade_da_etiqueta(product, etiqueta)
+            except perifericos.ErroPeriferico as exc:
+                QMessageBox.warning(self, "Etiqueta de balança", str(exc))
+                return
+            self._add_product(product, quantity)
+            self.query.clear()
             return
         exact = next(
             (p for p in self.products if query in (
@@ -824,13 +871,17 @@ class PDVWindow(QMainWindow):
         if row < len(self.products):
             self._add_product(self.products[row])
 
-    def _add_product(self, product):
+    def _add_product(self, product, increment=None):
         if self.checkout_payload:
             QMessageBox.warning(self, "Venda pendente", "Finalize a tentativa pendente antes de alterar o carrinho.")
             return
+        if increment is None and perifericos.vende_por_peso(product) and perifericos.balanca_configurada(self.perifericos):
+            increment = self._weigh(product)
+            if increment is None:
+                return
         product_id = int(product["id"])
         available = Decimal(str(product.get("estoque_atual", "0")))
-        quantity = self.cart.get(product_id, {}).get("quantidade", Decimal("0")) + Decimal("1")
+        quantity = self.cart.get(product_id, {}).get("quantidade", Decimal("0")) + (increment or Decimal("1"))
         if quantity * Decimal(str(product.get("fator_conversao", "1"))) > available:
             QMessageBox.warning(
                 self, "Estoque", "A quantidade excede o saldo disponível no último catálogo."
@@ -1200,6 +1251,11 @@ class PDVWindow(QMainWindow):
             QMessageBox.warning(self, "Orçamento", str(exc))
 
     def _checkout(self):
+        if self.tenant_id and self.suspensao.travado(self.tenant_id):
+            QMessageBox.critical(self, "Assinatura suspensa",
+                                 "O caixa está bloqueado porque a mensalidade do ApPdv não foi paga. "
+                                 "Peça ao administrador para pagar em Assinatura do ApPdv; o caixa libera sozinho em seguida.")
+            return
         if self.checkout_payload:
             self._submit_checkout(self.checkout_payload)
             return
@@ -1226,6 +1282,8 @@ class PDVWindow(QMainWindow):
         dialog = PaymentDialog(total, customer, self)
         if self.online and self.company_info.get('pix_configurado'):
             dialog.configure_pix(self.api)
+        if self.online and self.company_info.get('point_configurado'):
+            dialog.configure_point(self.api)
         def change_discount():
             self._discount_cart_item()
             gross = sum(((Decimal(str(item['produto']['preco_venda'])) * item['quantidade']).quantize(Decimal('.01')) for item in self.cart.values()), Decimal('0'))
@@ -1303,6 +1361,9 @@ class PDVWindow(QMainWindow):
         try:
             if not self.online or payload.get('caixa_local'):
                 raise requests.ConnectionError('offline')
+            if self.tenant_id and self.suspensao.dias_restantes(self.tenant_id) is not None:
+                # Assinatura suspensa (dentro da tolerância): a venda fica guardada neste PC.
+                raise requests.ConnectionError('assinatura suspensa')
             if payload.get('cliente_offline'):
                 local = payload['cliente_offline']
                 customer = self.api.cadastrar_cliente_cpf(local['documento'], local['nome'], local.get('telefone', ''))
@@ -1334,6 +1395,7 @@ class PDVWindow(QMainWindow):
                 self._open_danfe(nfce["danfe_url"])
             elif emit_button is not None and box.clickedButton() == emit_button:
                 self._nfce_last_sale()
+            self._open_drawer_for_sale(payload)
             self.store.clear_checkout_attempt(self.tenant_id, self.api.username)
             self.checkout_payload = None
             self.sale_key = str(uuid.uuid4())
@@ -1356,6 +1418,7 @@ class PDVWindow(QMainWindow):
                 cached['limite_disponivel'] = str(Decimal(str(cached['limite_disponivel'])) - credit)
                 self.store.save_customer(self.tenant_id, cached)
             self.store.queue_sale(self.tenant_id, payload, "Aguardando conexão")
+            self._open_drawer_for_sale(payload)
             path = self.store.save_receipt('PENDENTE-' + payload['idempotency_key'], self._build_receipt('PENDENTE — ' + payload['idempotency_key']))
             # Local quantities are provisional; the server validates again on sync.
             for line in payload['itens']:
@@ -1378,6 +1441,11 @@ class PDVWindow(QMainWindow):
             self._update_connection_label()
             QMessageBox.information(self, "Venda registrada localmente", f"Comprovante provisório: {path}\nA sincronização é automática quando a conexão voltar. Divergências ficarão pendentes de revisão.")
         except requests.HTTPError as exc:
+            if codigo_erro(exc) == 'assinatura_suspensa':
+                self._account_notice('assinatura_suspensa', mensagem_assinatura(exc))
+                if not self.suspensao.travado(self.tenant_id):
+                    self._submit_checkout(payload)
+                    return
             if exc.response is not None and 400 <= exc.response.status_code < 500:
                 self.store.clear_checkout_attempt(self.tenant_id, self.api.username)
                 self.checkout_payload = None
@@ -1507,6 +1575,15 @@ class PDVWindow(QMainWindow):
         if self.sync_worker and self.sync_worker.isRunning():
             self.sync_worker.wait(15000)
         try:
+            copia = updater.backup_dados_locais(self.store.path)
+            self.status.setText(f"Cópia de segurança dos dados locais: {copia.name}")
+        except Exception as exc:  # noqa: BLE001
+            resposta = QMessageBox.question(self, "Atualizar ApPdv",
+                                            f"Não consegui copiar os dados locais antes de atualizar ({exc}). Atualizar mesmo assim?")
+            if resposta != QMessageBox.StandardButton.Yes:
+                self.sync_timer.start(SYNC_INTERVAL_MS)
+                return
+        try:
             updater.iniciar_instalador(caminho)
         except OSError as exc:
             QMessageBox.warning(self, "Atualizar ApPdv", f"Não foi possível iniciar o instalador: {exc}")
@@ -1629,6 +1706,8 @@ class PDVWindow(QMainWindow):
         )
         change = sum((Decimal(str(p.get("troco", "0"))) for p in self.last_payments), Decimal("0"))
         pending_notice = "<h2>VENDA LOCAL PENDENTE DE SINCRONIZAÇÃO</h2>" if str(sale_id).startswith('PENDENTE') else ""
+        if pending_notice and self.company_info.get('nfce_automatica'):
+            pending_notice += "<div>Sem internet no momento da venda: a NFC-e é emitida automaticamente quando a conexão voltar.</div>"
         return f"""<!doctype html>
 <html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>Cupom interno #{sale_id}</title>
@@ -1933,6 +2012,12 @@ button {{ width:100%; padding:10px; margin:12px 0; }}
                     self.store.save_receipt(response['id'], text)
                     path.write_text(text, encoding='utf-8')
                 self.store.mark_synced(key)
+                nfce = (response or {}).get('nfce') or {}
+                if nfce and self.tenant_id == tenant:
+                    self.nfce_pos_sync.append({'venda': response['id'], 'estado': nfce.get('estado_texto', ''),
+                                               'danfe': nfce.get('danfe_url', ''), 'mensagem': nfce.get('mensagem', '')})
+                    self.nfce_offline_button.setText(f"NFC-e das vendas offline ({len(self.nfce_pos_sync)})")
+                    self.nfce_offline_button.setVisible(True)
                 if self.tenant_id == tenant:
                     self.status.setText(f"Venda sincronizada #{response['id']}")
         def rejected(key, error):
@@ -1961,8 +2046,96 @@ button {{ width:100%; padding:10px; margin:12px 0; }}
         self.sync_worker.catalog_changed.connect(catalog)
         self.sync_worker.connection.connect(connection)
         self.sync_worker.auth_updated.connect(auth)
+        self.sync_worker.account_notice.connect(lambda kind, message: self.tenant_id == tenant and self._account_notice(kind, message))
         self.sync_worker.finished.connect(lambda: self._update_connection_label())
         self.sync_worker.start()
+
+    # ------------------------------------------------------------------ assinatura do ApPdv
+    def _account_notice(self, kind, message):
+        if not self.tenant_id:
+            return
+        if kind == 'assinatura_suspensa':
+            self.suspensao.registrar(self.tenant_id)
+        elif kind == '':
+            self.suspensao.limpar(self.tenant_id)
+            self.account_limit_message = ''
+        elif kind == 'limite_caixas':
+            self.account_limit_message = message
+        self._render_account_banner()
+
+    def _render_account_banner(self):
+        if not hasattr(self, 'account_banner'):
+            return
+        restantes = self.suspensao.dias_restantes(self.tenant_id) if self.tenant_id else None
+        limite = getattr(self, 'account_limit_message', '')
+        if restantes is not None:
+            if restantes <= 0:
+                texto = ("⛔ Assinatura do ApPdv suspensa por falta de pagamento: novas vendas estão bloqueadas. "
+                         "O administrador pode pagar em Assinatura do ApPdv e o caixa libera na hora.")
+            else:
+                horas = int(restantes * 24)
+                texto = (f"⚠ Assinatura do ApPdv suspensa por falta de pagamento. As vendas ficam guardadas neste PC; "
+                         f"o caixa será bloqueado em {horas // 24} dia(s) e {horas % 24} h se o pagamento não for feito.")
+            self.account_banner.setStyleSheet("background:#c62828;color:white;font-weight:800;padding:8px 12px;border-radius:6px;")
+        elif limite:
+            texto = "⚠ " + limite
+            self.account_banner.setStyleSheet("background:#b26a00;color:white;font-weight:700;padding:8px 12px;border-radius:6px;")
+        else:
+            self.account_banner.hide()
+            return
+        self.account_banner.setText(texto)
+        self.account_banner.show()
+
+    # ------------------------------------------------------------------ periféricos
+    def _configure_devices(self):
+        from app.perifericos_ui import PerifericosDialog
+        dialog = PerifericosDialog(self.perifericos, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.perifericos = dialog.config
+            perifericos.salvar(self.settings, self.perifericos)
+            self.status.setText('Periféricos salvos neste computador')
+
+    def _weigh(self, product):
+        """Peso da balança para produto vendido por kg; se a leitura falhar, pede o peso digitado."""
+        try:
+            peso = perifericos.ler_peso(self.perifericos)
+            self.status.setText(f"Balança: {peso} kg")
+            return peso
+        except perifericos.ErroPeriferico as exc:
+            valor, ok = QInputDialog.getDouble(self, "Peso", f"{exc}\nInforme o peso de {product.get('nome', '')} (kg):", 0, 0, 999, 3)
+            return Decimal(str(valor)).quantize(Decimal("0.001")) if ok and valor > 0 else None
+
+    def _open_drawer_for_sale(self, payload):
+        if not self.perifericos.get('gaveta_modo') or not self.perifericos.get('gaveta_dinheiro'):
+            return
+        if not any(p.get('meio') == 'DINHEIRO' for p in payload.get('pagamentos', [])):
+            return
+        try:
+            perifericos.abrir_gaveta(self.perifericos)
+        except perifericos.ErroPeriferico as exc:
+            self.status.setText(str(exc)[:180])
+
+    def _show_offline_nfce(self):
+        linhas = []
+        for item in self.nfce_pos_sync[-50:]:
+            linha = f"Venda #{item['venda']}: {item['estado']}"
+            if item.get('mensagem'):
+                linha += f" — {item['mensagem']}"
+            linhas.append(linha)
+        box = QMessageBox(self)
+        box.setWindowTitle("NFC-e das vendas feitas sem internet")
+        box.setText("Notas emitidas ao sincronizar as vendas guardadas neste computador:")
+        box.setInformativeText("\n".join(linhas) or "Nenhuma ainda.")
+        com_danfe = [i for i in self.nfce_pos_sync if i.get('danfe')]
+        abrir = box.addButton(f"Abrir DANFEs ({len(com_danfe)})", QMessageBox.ButtonRole.AcceptRole) if com_danfe else None
+        box.addButton("Fechar", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        if abrir is not None and box.clickedButton() == abrir:
+            for item in com_danfe:
+                self._open_danfe(item['danfe'])
+            self.nfce_pos_sync = [i for i in self.nfce_pos_sync if not i.get('danfe')]
+            self.nfce_offline_button.setText(f"NFC-e das vendas offline ({len(self.nfce_pos_sync)})")
+            self.nfce_offline_button.setVisible(bool(self.nfce_pos_sync))
 
     def _toggle_fullscreen(self):
         self.showNormal() if self.isFullScreen() else self.showFullScreen()

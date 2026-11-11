@@ -3,7 +3,7 @@ import secrets
 import uuid
 from django.conf import settings
 from django.db import models
-from django.core.validators import MinValueValidator
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.utils import timezone
 
 
@@ -37,6 +37,7 @@ class Empresa(models.Model):
                  ("08", "08 · Sem incidência"), ("49", "49 · Outras operações de saída"), ("99", "99 · Outras operações")],
     )
     mp_access_token = models.CharField("Access token do Mercado Pago (PIX)", max_length=300, blank=True)
+    mp_point_dispositivo = models.CharField("Maquininha Mercado Pago Point (ID do dispositivo)", max_length=80, blank=True)
     slug = models.SlugField(max_length=180, unique=True)
     ativa = models.BooleanField(default=True)
     logo = models.ImageField(upload_to="empresas/logos/", blank=True)
@@ -763,6 +764,7 @@ class Plano(models.Model):
     caixas_incluidos = models.PositiveIntegerField("Caixas (PDV) incluídos", default=1)
     valor_caixa_adicional = models.DecimalField("Valor por caixa adicional (R$)", max_digits=10, decimal_places=2, default=0, validators=[MinValueValidator(0)])
     limite_usuarios = models.PositiveIntegerField("Limite de usuários (0 = sem limite)", default=0)
+    limite_caixas = models.PositiveIntegerField("Limite de caixas (0 = sem limite; acima do incluído cobra adicional)", default=0)
     ativo = models.BooleanField(default=True)
     ordem = models.PositiveIntegerField(default=0)
 
@@ -780,6 +782,9 @@ class ConfiguracaoMaster(models.Model):
     carencia_dias = models.PositiveIntegerField("Dias de carência após o vencimento", default=5)
     dias_antecedencia = models.PositiveIntegerField("Gerar a fatura quantos dias antes do vencimento", default=10)
     plano_padrao = models.ForeignKey(Plano, null=True, blank=True, on_delete=models.SET_NULL, verbose_name="Plano padrão de empresas novas")
+    cadastro_aberto = models.BooleanField("Cadastro próprio aberto (página Comece grátis)", default=False)
+    avisos_email = models.BooleanField("Enviar avisos de cobrança por e-mail", default=True)
+    aviso_dias_antes = models.PositiveIntegerField("Avisar quantos dias antes do vencimento", default=3)
     atualizado_em = models.DateTimeField(auto_now=True)
 
     @classmethod
@@ -809,6 +814,12 @@ class Assinatura(models.Model):
                                          validators=[MinValueValidator(0)], help_text="Substitui o valor do plano (caixas adicionais continuam somando).")
     desconto_percentual = models.DecimalField("Desconto (%)", max_digits=5, decimal_places=2, default=0, validators=[MinValueValidator(0)])
     observacao = models.CharField("Observação interna", max_length=250, blank=True)
+    cupom = models.ForeignKey("Cupom", null=True, blank=True, on_delete=models.SET_NULL)
+    cupom_meses_restantes = models.PositiveIntegerField(default=0)
+    # Cartão recorrente (assinatura do Mercado Pago na conta do master).
+    mp_preapproval_id = models.CharField(max_length=80, blank=True, db_index=True)
+    mp_preapproval_status = models.CharField(max_length=20, blank=True)
+    mp_valor_recorrente = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     suspensa_em = models.DateField(null=True, blank=True)
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
@@ -819,6 +830,10 @@ class Assinatura(models.Model):
     @property
     def bloqueada(self):
         return self.estado == self.Estado.SUSPENSA
+
+    @property
+    def recorrente(self):
+        return bool(self.mp_preapproval_id) and self.mp_preapproval_status == "authorized"
 
 
 class Fatura(models.Model):
@@ -841,8 +856,33 @@ class Fatura(models.Model):
     mp_payment_id = models.CharField(max_length=40, blank=True, db_index=True)
     link_pagamento = models.URLField(max_length=500, blank=True)
     observacao = models.CharField(max_length=250, blank=True)
+    avisos = models.JSONField(default=list, blank=True)
     criada_em = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ("-vencimento", "-pk")
         constraints = [models.UniqueConstraint(fields=("empresa", "competencia"), name="fatura_unica_por_competencia")]
+
+
+class Cupom(models.Model):
+    """Desconto promocional por alguns meses (ex.: 3 meses com 50%)."""
+    codigo = models.CharField("Código", max_length=30, unique=True)
+    descricao = models.CharField("Descrição", max_length=150, blank=True)
+    desconto_percentual = models.DecimalField("Desconto (%)", max_digits=5, decimal_places=2,
+                                              validators=[MinValueValidator(0), MaxValueValidator(100)])
+    meses = models.PositiveIntegerField("Por quantas mensalidades", default=1)
+    valido_ate = models.DateField("Válido até (em branco = sem prazo)", null=True, blank=True)
+    usos_maximos = models.PositiveIntegerField("Usos máximos (0 = ilimitado)", default=0)
+    usos = models.PositiveIntegerField(default=0)
+    ativo = models.BooleanField(default=True)
+    criado_em = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-criado_em",)
+
+    def save(self, *args, **kwargs):
+        self.codigo = (self.codigo or "").strip().upper()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.codigo} · {self.desconto_percentual:g}% por {self.meses} mês(es)"

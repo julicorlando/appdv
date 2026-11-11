@@ -129,6 +129,10 @@ EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
 EMAIL_USE_TLS = env_bool("EMAIL_USE_TLS", True)
 DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER or "nao-responda@localhost")
+EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "10"))
+
+# Endereço público do sistema (links nos e-mails). Padrão: a primeira origem de CSRF_TRUSTED_ORIGINS.
+SITE_URL = os.getenv("SITE_URL", "") or (CSRF_TRUSTED_ORIGINS[0] if CSRF_TRUSTED_ORIGINS else "")
 EMAIL_BACKEND = (
     "django.core.mail.backends.smtp.EmailBackend" if EMAIL_HOST
     else "django.core.mail.backends.console.EmailBackend"
@@ -137,6 +141,13 @@ EMAIL_BACKEND = (
 # Cópias de segurança geradas por `manage.py backup_dados` (fora de MEDIA_ROOT: nunca públicas).
 BACKUP_DIR = Path(os.getenv("BACKUP_DIR", str(BASE_DIR / "backups")))
 BACKUP_MANTER = int(os.getenv("BACKUP_MANTER", "14"))
+# Cópia externa dos backups (S3 compatível: AWS, Backblaze B2, Cloudflare R2, Wasabi…). Opcional.
+BACKUP_S3_ENDPOINT = os.getenv("BACKUP_S3_ENDPOINT", "")
+BACKUP_S3_BUCKET = os.getenv("BACKUP_S3_BUCKET", "")
+BACKUP_S3_REGION = os.getenv("BACKUP_S3_REGION", "us-east-1")
+BACKUP_S3_ACCESS_KEY = os.getenv("BACKUP_S3_ACCESS_KEY", "")
+BACKUP_S3_SECRET_KEY = os.getenv("BACKUP_S3_SECRET_KEY", "")
+BACKUP_S3_PREFIX = os.getenv("BACKUP_S3_PREFIX", "appdv/")
 
 LOGIN_URL = "/accounts/login/"
 LOGIN_REDIRECT_URL = "/"

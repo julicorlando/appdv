@@ -35,6 +35,19 @@ def attach_pix(payments, pix):
     return True
 
 
+def attach_point(payments, point):
+    """Marca o pagamento em cartão aprovado na maquininha Point (mesmo valor). Devolve True se marcou."""
+    if not point or point.get('estado') != 'APROVADO':
+        return False
+    valor = Decimal(str(point.get('valor', '0'))).quantize(Decimal('.01'))
+    card = next((p for p in payments if p['meio'] == 'CARTAO' and Decimal(p['valor']) == valor), None)
+    if not card:
+        return False
+    detalhes = ' '.join(v for v in (point.get('bandeira', ''), point.get('autorizacao', '')) if v)
+    card['referencia_externa'] = f"Point MP {point.get('pagamento', '')} {detalhes}".strip()[:120]
+    return True
+
+
 def split_payment(total, amounts, credit=Decimal('0')):
     total, credit = Decimal(str(total)), Decimal(str(credit))
     values = [(method, label, Decimal(str(value))) for method, label, value in amounts]
@@ -111,6 +124,11 @@ class PaymentDialog(QDialog):
         self.pix_worker = None
         self.pix_box = QVBoxLayout()
         layout.addLayout(self.pix_box)
+        self.point_api = None
+        self.point = None
+        self.point_worker = None
+        self.point_box = QVBoxLayout()
+        layout.addLayout(self.point_box)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         self.confirm = buttons.button(QDialogButtonBox.StandardButton.Ok)
         self.confirm.setText('Confirmar pagamento')
@@ -244,11 +262,91 @@ class PaymentDialog(QDialog):
                   'APROVADO': 'PIX recebido ✓ — confirme o pagamento.'}
         self.pix_status.setText(textos.get(estado, f"Cobrança {(self.pix or {}).get('estado_texto', '').lower()}. Gere outro QR Code."))
 
+    # ------------------------------------------------------------------ maquininha Point
+    def configure_point(self, api):
+        """Botão para cobrar o cartão direto na maquininha Mercado Pago Point vinculada à empresa."""
+        self.point_api = api
+        self.point_button = QPushButton('Cobrar cartão na maquininha (Mercado Pago Point)')
+        self.point_button.clicked.connect(self._create_point)
+        self.point_cancel = QPushButton('Cancelar cobrança na maquininha')
+        self.point_cancel.clicked.connect(self._cancel_point)
+        self.point_cancel.hide()
+        self.point_status = QLabel()
+        self.point_status.setWordWrap(True)
+        for widget in (self.point_button, self.point_cancel, self.point_status):
+            self.point_box.addWidget(widget)
+        self.point_timer = QTimer(self)
+        self.point_timer.setInterval(3000)
+        self.point_timer.timeout.connect(self._poll_point)
+
+    def _card_charge(self):
+        """(valor, tipo) dos campos de cartão: só um deles (débito ou crédito) pode estar preenchido."""
+        cards = [(label, Decimal(str(w.value())).quantize(Decimal('.01'))) for m, label, w in self.inputs if m == 'CARTAO']
+        filled = [(label, value) for label, value in cards if value > 0]
+        if len(filled) != 1:
+            return None, None
+        label, value = filled[0]
+        return value, 'CREDITO' if 'crédito' in label.lower() else 'DEBITO'
+
+    def _run_point(self, call, on_done):
+        if self.point_worker and self.point_worker.isRunning():
+            return
+        self.point_worker = PixWorker(call, self)
+        self.point_worker.done.connect(on_done)
+        self.point_worker.failed.connect(lambda message: self.point_status.setText('Maquininha: ' + message))
+        self.point_worker.start()
+
+    def _create_point(self):
+        value, kind = self._card_charge()
+        if not value:
+            self.point_status.setText('Preencha o valor em Cartão de débito OU Cartão de crédito (só um) antes de cobrar.')
+            return
+        self.point = None
+        self.point_status.setText(f'Enviando R$ {value:.2f} ({kind.lower()}) para a maquininha…')
+        key = str(uuid.uuid4())
+        self._run_point(lambda: self.point_api.point_criar(value, kind, key), self._point_created)
+
+    def _point_created(self, data):
+        self.point = data
+        self.point_cancel.show()
+        self.point_status.setText(f"Passe o cartão na maquininha · R$ {Decimal(str(data['valor'])):.2f}…")
+        self.point_timer.start()
+
+    def _poll_point(self):
+        if not self.point or self.point.get('estado') != 'PENDENTE':
+            self.point_timer.stop()
+            return
+        intent = self.point['id']
+        self._run_point(lambda: self.point_api.point_consultar(intent), self._point_polled)
+
+    def _point_polled(self, data):
+        self.point = {**(self.point or {}), **data}
+        estado = data.get('estado')
+        if estado == 'PENDENTE':
+            return
+        self.point_timer.stop()
+        self.point_cancel.hide()
+        textos = {'APROVADO': 'Cartão aprovado ✓ — confirme o pagamento.',
+                  'RECUSADO': 'Pagamento recusado na maquininha. Tente outro cartão ou outra forma.',
+                  'CANCELADO': 'Cobrança cancelada na maquininha.', 'ERRO': 'A maquininha informou erro. Tente de novo.'}
+        self.point_status.setText(textos.get(estado, f'Maquininha: {estado}'))
+
+    def _cancel_point(self):
+        if not self.point:
+            return
+        self.point_timer.stop()
+        intent = self.point['id']
+        self._run_point(lambda: self.point_api.point_cancelar(intent), self._point_polled)
+
     def done(self, result):
         if hasattr(self, 'pix_timer'):
             self.pix_timer.stop()
         if self.pix_worker and self.pix_worker.isRunning():
             self.pix_worker.wait(5000)
+        if hasattr(self, 'point_timer'):
+            self.point_timer.stop()
+        if self.point_worker and self.point_worker.isRunning():
+            self.point_worker.wait(5000)
         super().done(result)
 
     def accept_payment(self):
@@ -262,4 +360,9 @@ class PaymentDialog(QDialog):
             if answer != QMessageBox.StandardButton.Yes:
                 self.payments = None
                 return
+        if self.point and self.point.get('estado') == 'PENDENTE':
+            QMessageBox.warning(self, 'Maquininha', 'Aguarde a maquininha concluir ou cancele a cobrança antes de confirmar.')
+            self.payments = None
+            return
+        attach_point(self.payments, self.point)
         self.accept()
