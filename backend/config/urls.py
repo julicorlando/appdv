@@ -8,7 +8,7 @@ from core.api import (
     MinhasEmpresasView, PedidosWebView, FinalizarPedidoWebView, ProdutoViewSet, VendaViewSet,
 )
 from core.api import ClienteCPFView, OrcamentosView, AutorizarDescontoView, TerminalHeartbeatView, DescartarVendaOfflineView, LoginView
-from core.api import AlterarSenhaView, PixCobrancaDetalheView, PixCobrancaView, PixWebhookView, VersaoPdvView
+from core.api import AlterarSenhaView, PixCobrancaDetalheView, PixCobrancaView, PixWebhookView, PointCobrancaDetalheView, PointCobrancaView, VersaoPdvView
 from core import extras_web as extras
 from core import cobranca_web
 from core.desktop_sessions import DesktopSessionView, iniciar_sessao_desktop
@@ -31,10 +31,15 @@ urlpatterns = [
     path("master/cobranca/", cobranca_web.master_cobranca, name="master-cobranca"),
     path("master/cobranca/configuracao/", cobranca_web.master_configuracao, name="master-cobranca-config"),
     path("master/cobranca/planos/", cobranca_web.master_plano, name="master-plano"),
+    path("master/cobranca/cupons/", cobranca_web.master_cupom, name="master-cupom"),
+    path("master/auditoria/", cobranca_web.master_auditoria, name="master-auditoria"),
+    path("cadastro/", cobranca_web.cadastro, name="cadastro"),
+    path("saude/", cobranca_web.saude, name="saude"),
     path("master/empresas/<int:empresa_id>/assinatura/", cobranca_web.master_assinatura, name="master-assinatura"),
     path("master/empresas/<int:empresa_id>/entrar/", cobranca_web.master_entrar, name="master-entrar"),
     path("master/sair-da-empresa/", cobranca_web.master_sair_empresa, name="master-sair-empresa"),
     path("empresa/<int:empresa_id>/assinatura/", cobranca_web.empresa_assinatura, name="empresa-assinatura"),
+    path("empresa/<int:empresa_id>/assinatura/acao/", cobranca_web.empresa_assinatura_acao, name="empresa-assinatura-acao"),
     path("empresa/<int:empresa_id>/assinatura/faturas/<int:fatura_id>/pagar/", cobranca_web.empresa_assinatura_pagar, name="empresa-assinatura-pagar"),
     path("empresa/<int:empresa_id>/assinatura/faturas/<int:fatura_id>/verificar/", cobranca_web.empresa_assinatura_verificar, name="empresa-assinatura-verificar"),
     path("api/v1/cobranca/webhook/", cobranca_web.webhook, name="cobranca-webhook"),
@@ -105,6 +110,8 @@ urlpatterns = [
     path("api/v1/pix/cobrancas/", PixCobrancaView.as_view(), name="pix-cobrancas"),
     path("api/v1/pix/cobrancas/<int:cobranca_id>/", PixCobrancaDetalheView.as_view(), name="pix-cobranca"),
     path("api/v1/pix/webhook/<int:empresa_id>/", PixWebhookView.as_view(), name="pix-webhook"),
+    path("api/v1/point/cobrancas/", PointCobrancaView.as_view(), name="point-cobrancas"),
+    path("api/v1/point/cobrancas/<str:intencao_id>/", PointCobrancaDetalheView.as_view(), name="point-cobranca"),
     path("api/v1/descontos/autorizar/", AutorizarDescontoView.as_view(), name="desconto-autorizar"),
     path("api/v1/clientes/cpf/", ClienteCPFView.as_view(), name="cliente-cpf"),
     path("api/v1/orcamentos/", OrcamentosView.as_view(), name="orcamentos"),
