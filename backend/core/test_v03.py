@@ -119,7 +119,7 @@ class ProdutosTests(Base):
         self.product.refresh_from_db()
         self.assertTrue(ean13_valido(self.product.codigo_barras))
         resposta = self.client.get(f"{self.url}/etiquetas/", {"p": self.product.pk, "copias": "2"})
-        self.assertContains(resposta, "<svg", count=2)
+        self.assertContains(resposta, "aria-label=\"Código de barras", count=2)
 
 
 class FinanceiroTests(Base):

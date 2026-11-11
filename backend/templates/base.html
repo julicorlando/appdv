@@ -6,36 +6,40 @@
 <title>{% block title %}Armazém PDV{% endblock %}</title>
 <link rel="stylesheet" href="{% static 'app.css' %}">
 </head>
-<body>
-<header class="topbar"><a class="brand" href="/" aria-label="ApPdv"><img src="/static/brand/appdv-logo-web.png" alt="ApPdv — Sistema de vendas e gerenciamento para armazéns"></a>
-{% if user.is_authenticated %}<div class="top-actions"><span>{{ user.get_username }}</span><a class="ghost" href="{% url 'minha-senha' %}">Minha senha</a><form method="post" action="{% url 'logout' %}">{% csrf_token %}<button class="ghost" type="submit">Sair</button></form></div>{% endif %}
-</header>
+<body class="{% if user.is_authenticated %}with-shell{% else %}no-shell{% endif %}">
+{% if user.is_authenticated %}
+<div class="shell">
+<aside class="sidebar" id="sidebar" aria-label="Menu">
+<div class="side-brand"><a class="side-logo" href="/" aria-label="ApPdv — início"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></a>
+<div class="side-brand-text"><strong>ApPdv</strong>{% if empresa and membro and not master_view %}<a href="{% url 'empresa-dashboard' empresa.id %}" title="{{ empresa.nome }}">{{ empresa.nome }}</a>{% elif user.is_superuser %}<span>Painel Master</span>{% endif %}</div>
+<button type="button" class="side-close" aria-label="Fechar menu" data-nav-close><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+<label class="side-search"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><input type="search" id="side-search" placeholder="Buscar tela" aria-label="Buscar tela no menu" autocomplete="off"></label>
 {% if user.is_authenticated and user.is_superuser %}
-<nav class="global-nav master-nav" aria-label="Navegação do Master"><a class="nav-home" href="{% url 'master' %}"{% if request.resolver_match.url_name == "master" %} aria-current="page"{% endif %}>Painel Master</a><a href="{% url 'master-cobranca' %}"{% if request.resolver_match.url_name == "master-cobranca" %} aria-current="page"{% endif %}>Cobrança e planos</a><a href="{% url 'master-auditoria' %}"{% if request.resolver_match.url_name == "master-auditoria" %} aria-current="page"{% endif %}>Auditoria</a>{% if master_na_empresa %}<form method="post" action="{% url 'master-sair-empresa' %}" style="display:inline">{% csrf_token %}<button class="ghost" type="submit">Sair da empresa</button></form>{% endif %}</nav>
+<nav class="side-nav master-nav" aria-label="Navegação do Master"><p class="side-label">Master</p><a class="nav-home" href="{% url 'master' %}"{% if request.resolver_match.url_name == "master" %} aria-current="page"{% endif %}>Painel Master</a><a href="{% url 'master-cobranca' %}"{% if request.resolver_match.url_name == "master-cobranca" %} aria-current="page"{% endif %}>Cobrança e planos</a><a href="{% url 'master-auditoria' %}"{% if request.resolver_match.url_name == "master-auditoria" %} aria-current="page"{% endif %}>Auditoria</a>{% if master_na_empresa %}<form method="post" action="{% url 'master-sair-empresa' %}" style="display:inline">{% csrf_token %}<button class="side-exit" type="submit">Sair da empresa</button></form>{% endif %}</nav>
 {% endif %}
 {% if user.is_authenticated and empresa and membro and not master_view %}
-<nav class="global-nav" aria-label="Navegação principal da empresa">
-<div class="nav-tenant"><span class="nav-tenant-label">{{ membro.get_papel_display|upper }}</span><a href="{% url 'empresa-dashboard' empresa.id %}"{% if request.resolver_match.url_name == "empresa-dashboard" %} aria-current="page"{% endif %}>{{ empresa.nome }}</a></div>
+<nav class="side-nav" aria-label="Navegação principal da empresa">
+
 <div class="nav-groups">
-<a class="nav-home" href="{% url 'empresa-dashboard' empresa.id %}"{% if request.resolver_match.url_name == "empresa-dashboard" %} aria-current="page"{% endif %}>Visão geral</a>
-<details class="nav-group" {% if request.resolver_match.url_name == "empresa-vendas" or request.resolver_match.url_name == "empresa-pedidos-web" %}open{% endif %}><summary>Operação</summary><div class="nav-menu"><a href="{% url 'gestao-orcamentos' empresa.id %}">Orçamentos</a>
+<a class="nav-home" href="{% url 'empresa-dashboard' empresa.id %}"{% if request.resolver_match.url_name == "empresa-dashboard" %} aria-current="page"{% endif %}><svg class="ico" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg><span>Visão geral</span></a>
+<details class="nav-group" {% if request.resolver_match.url_name == "empresa-vendas" or request.resolver_match.url_name == "empresa-pedidos-web" %}open{% endif %}><summary><svg class="ico" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h3l2.5 12h11L21 7H6.2"/><circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/></svg><span>Operação</span></summary><div class="nav-menu"><a href="{% url 'gestao-orcamentos' empresa.id %}">Orçamentos</a>
 <a href="{% url 'caixa-web' empresa.id %}">Caixa web</a>
 <a href="{% url 'empresa-vendas' empresa.id %}"{% if request.resolver_match.url_name == "empresa-vendas" %} aria-current="page"{% endif %}>Vendas</a>
 <a href="{% url 'empresa-pedidos-web' empresa.id %}"{% if request.resolver_match.url_name == "empresa-pedidos-web" %} aria-current="page"{% endif %}>Pedidos web{% if pedidos_confirmados %} <span class="nav-count">{{ pedidos_confirmados }}</span>{% endif %}</a>
 </div></details>
 {% if membro.papel != "CAIXA" %}
-<details class="nav-group" {% if request.resolver_match.url_name == "empresa-produtos" or request.resolver_match.url_name == "empresa-inventario" or request.resolver_match.url_name == "empresa-movimentacoes" or request.resolver_match.url_name == "empresa-compras" %}open{% endif %}><summary>Estoque e compras</summary><div class="nav-menu"><a href="{% url 'gestao-depositos' empresa.id %}">Depósitos e transferências</a><a href="{% url 'empresa-fornecedores' empresa.id %}">Fornecedores</a><a href="{% url 'empresa-etiquetas' empresa.id %}">Etiquetas de preço</a><a href="{% url 'gestao-entregas' empresa.id %}">Separação e entregas</a><a href="{% url 'gestao-reposicao' empresa.id %}">Compras e reposição</a>
+<details class="nav-group" {% if request.resolver_match.url_name == "empresa-produtos" or request.resolver_match.url_name == "empresa-inventario" or request.resolver_match.url_name == "empresa-movimentacoes" or request.resolver_match.url_name == "empresa-compras" %}open{% endif %}><summary><svg class="ico" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l9-4 9 4v10l-9 4-9-4z"/><path d="M3 7l9 4 9-4M12 11v10"/></svg><span>Estoque e compras</span></summary><div class="nav-menu"><a href="{% url 'gestao-depositos' empresa.id %}">Depósitos e transferências</a><a href="{% url 'empresa-fornecedores' empresa.id %}">Fornecedores</a><a href="{% url 'empresa-etiquetas' empresa.id %}">Etiquetas de preço</a><a href="{% url 'gestao-entregas' empresa.id %}">Separação e entregas</a><a href="{% url 'gestao-reposicao' empresa.id %}">Compras e reposição</a>
 <a href="{% url 'empresa-produtos' empresa.id %}"{% if request.resolver_match.url_name == "empresa-produtos" %} aria-current="page"{% endif %}>Produtos e estoque</a>
 <a href="{% url 'empresa-inventario' empresa.id %}"{% if request.resolver_match.url_name == "empresa-inventario" %} aria-current="page"{% endif %}>Inventário</a>
 <a href="{% url 'empresa-movimentacoes' empresa.id %}"{% if request.resolver_match.url_name == "empresa-movimentacoes" %} aria-current="page"{% endif %}>Movimentações</a>
 <a href="{% url 'empresa-compras' empresa.id %}"{% if request.resolver_match.url_name == "empresa-compras" %} aria-current="page"{% endif %}>Compras e NF-e</a>
 </div></details>
-<details class="nav-group" {% if request.resolver_match.url_name == "empresa-clientes" or request.resolver_match.url_name == "empresa-contas-receber" or request.resolver_match.url_name == "empresa-contas-pagar" %}open{% endif %}><summary>Clientes e financeiro</summary><div class="nav-menu"><a href="{% url 'gestao-devolucoes' empresa.id %}">Trocas e devoluções</a><a href="{% url 'gestao-caixas' empresa.id %}">Conferência de caixas</a><a href="{% url 'gestao-relatorios' empresa.id %}">Margens e resultados</a><a href="{% url 'empresa-relatorios-gerenciais' empresa.id %}">Relatórios gerenciais</a>
+<details class="nav-group" {% if request.resolver_match.url_name == "empresa-clientes" or request.resolver_match.url_name == "empresa-contas-receber" or request.resolver_match.url_name == "empresa-contas-pagar" %}open{% endif %}><summary><svg class="ico" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="14" rx="2"/><path d="M16 13h2M3 10h18"/></svg><span>Clientes e financeiro</span></summary><div class="nav-menu"><a href="{% url 'gestao-devolucoes' empresa.id %}">Trocas e devoluções</a><a href="{% url 'gestao-caixas' empresa.id %}">Conferência de caixas</a><a href="{% url 'gestao-relatorios' empresa.id %}">Margens e resultados</a><a href="{% url 'empresa-relatorios-gerenciais' empresa.id %}">Relatórios gerenciais</a>
 <a href="{% url 'empresa-clientes' empresa.id %}"{% if request.resolver_match.url_name == "empresa-clientes" %} aria-current="page"{% endif %}>Clientes</a>
 <a href="{% url 'empresa-contas-receber' empresa.id %}"{% if request.resolver_match.url_name == "empresa-contas-receber" %} aria-current="page"{% endif %}>Contas a receber</a>
 <a href="{% url 'empresa-contas-pagar' empresa.id %}"{% if request.resolver_match.url_name == "empresa-contas-pagar" %} aria-current="page"{% endif %}>Contas a pagar</a>
 </div></details>
-<details class="nav-group" {% if request.resolver_match.url_name == "empresa-configuracao" or request.resolver_match.url_name == "empresa-autorizacao" %}open{% endif %}><summary>Administração</summary><div class="nav-menu"><a href="{% url 'gestao-sincronizacao' empresa.id %}">Sincronização dos caixas</a>{% if membro.papel != 'CAIXA' %}<a href="{% url 'empresa-assinatura' empresa.id %}"{% if request.resolver_match.url_name == "empresa-assinatura" %} aria-current="page"{% endif %}>Assinatura do ApPdv</a>{% endif %}<a href="{% url 'gestao-fiscal' empresa.id %}">Central fiscal</a>{% if membro.papel == 'ADMIN' %}<a href="{% url 'gestao-equipe' empresa.id %}">Equipe e permissões</a><a href="{% url 'gestao-descontos' empresa.id %}">Políticas de desconto</a>{% endif %}
+<details class="nav-group" {% if request.resolver_match.url_name == "empresa-configuracao" or request.resolver_match.url_name == "empresa-autorizacao" %}open{% endif %}><summary><svg class="ico" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg><span>Administração</span></summary><div class="nav-menu"><a href="{% url 'gestao-sincronizacao' empresa.id %}">Sincronização dos caixas</a>{% if membro.papel != 'CAIXA' %}<a href="{% url 'empresa-assinatura' empresa.id %}"{% if request.resolver_match.url_name == "empresa-assinatura" %} aria-current="page"{% endif %}>Assinatura do ApPdv</a>{% endif %}<a href="{% url 'gestao-fiscal' empresa.id %}">Central fiscal</a>{% if membro.papel == 'ADMIN' %}<a href="{% url 'gestao-equipe' empresa.id %}">Equipe e permissões</a><a href="{% url 'gestao-descontos' empresa.id %}">Políticas de desconto</a>{% endif %}
 <a href="{% url 'empresa-configuracao' empresa.id %}"{% if request.resolver_match.url_name == "empresa-configuracao" %} aria-current="page"{% endif %}>Empresa e dados fiscais</a>
 <a href="{% url 'empresa-autorizacao' empresa.id %}"{% if request.resolver_match.url_name == "empresa-autorizacao" %} aria-current="page"{% endif %}>Autorizações</a>
 </div></details>
@@ -43,17 +47,61 @@
 </div>
 </nav>
 {% endif %}
+<div class="side-user"><span class="avatar">{{ user.get_username|first|upper }}</span><div class="side-user-text"><strong>{{ user.get_username }}</strong><span>{% if membro and not master_view %}{{ membro.get_papel_display }}{% elif user.is_superuser %}Master{% endif %}</span></div>
+<div class="side-user-actions"><a href="{% url 'minha-senha' %}" class="side-link">Minha senha</a><form method="post" action="{% url 'logout' %}">{% csrf_token %}<button class="side-link" type="submit">Sair</button></form></div></div>
+</aside>
+<div class="nav-backdrop" data-nav-close></div>
+<div class="shell-main">
+<header class="mobilebar"><button type="button" class="mobilebar-btn" aria-label="Abrir menu" aria-controls="sidebar" aria-expanded="false" data-nav-open><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+<div class="mobilebar-title"><strong>ApPdv</strong>{% if empresa and membro and not master_view %}<span>{{ empresa.nome }}</span>{% endif %}</div></header>
+{% else %}
+<header class="topbar"><a class="brand" href="/" aria-label="ApPdv"><img src="/static/brand/appdv-logo-web.png" alt="ApPdv — Sistema de vendas e gerenciamento para armazéns"></a></header>
+{% endif %}
 <main class="wrap">
 {% if master_na_empresa and empresa and not master_view %}<section class="messages"><div class="message info">Você está no painel de <b>{{ empresa.nome }}</b> como Master (acesso total, registrado na auditoria).</div></section>{% endif %}
 {% if aviso_cobranca and request.resolver_match.url_name != "empresa-assinatura" %}<section class="messages"><div class="message {% if aviso_cobranca.nivel == 'erro' %}error{% else %}info{% endif %}">{{ aviso_cobranca.texto }} {% if empresa and membro.papel != 'CAIXA' %}<a href="{% url 'empresa-assinatura' empresa.id %}">Ver assinatura e pagar</a>{% endif %}</div></section>{% endif %}
 {% if messages %}<section class="messages">{% for message in messages %}<div class="message {{ message.tags }}">{{ message }}</div>{% endfor %}</section>{% endif %}
 {% block content %}{% endblock %}
 </main>
+{% if user.is_authenticated %}
+</div>
+</div>
+{% if empresa and membro and not master_view %}
+<nav class="tabbar" aria-label="Atalhos">
+<a href="{% url 'empresa-dashboard' empresa.id %}"{% if request.resolver_match.url_name == "empresa-dashboard" %} aria-current="page"{% endif %}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg>Início</a>
+<a href="{% url 'caixa-web' empresa.id %}"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h3l2.5 12h11L21 7H6.2"/><circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/></svg>Caixa</a>
+<a href="{% url 'empresa-vendas' empresa.id %}"{% if request.resolver_match.url_name == "empresa-vendas" %} aria-current="page"{% endif %}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V5M4 19h16M8 15l4-4 3 3 5-6"/></svg>Vendas</a>
+{% if membro.papel != "CAIXA" %}<a href="{% url 'empresa-produtos' empresa.id %}"{% if request.resolver_match.url_name == "empresa-produtos" %} aria-current="page"{% endif %}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l9-4 9 4v10l-9 4-9-4z"/><path d="M3 7l9 4 9-4M12 11v10"/></svg>Estoque</a>{% endif %}
+<button type="button" data-nav-open aria-controls="sidebar"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>Menu</button>
+</nav>
+{% endif %}
 <script>
-document.addEventListener("click", function (event) {
-  document.querySelectorAll(".nav-group[open]").forEach(function (group) {
-    if (!group.contains(event.target)) group.removeAttribute("open");
+(function () {
+  var body = document.body;
+  function setOpen(open) {
+    body.classList.toggle("nav-open", open);
+    document.querySelectorAll("[data-nav-open]").forEach(function (b) { b.setAttribute("aria-expanded", open ? "true" : "false"); });
+  }
+  document.querySelectorAll("[data-nav-open]").forEach(function (b) { b.addEventListener("click", function () { setOpen(true); }); });
+  document.querySelectorAll("[data-nav-close]").forEach(function (b) { b.addEventListener("click", function () { setOpen(false); }); });
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") setOpen(false); });
+  // Abre o grupo da tela atual.
+  document.querySelectorAll(".side-nav a[aria-current=page]").forEach(function (a) { var g = a.closest("details"); if (g) g.open = true; });
+  // Busca de telas no menu.
+  var busca = document.getElementById("side-search");
+  if (busca) busca.addEventListener("input", function () {
+    var termo = busca.value.trim().toLowerCase();
+    document.querySelectorAll(".side-nav details").forEach(function (g) {
+      var algum = false;
+      g.querySelectorAll(".nav-menu a").forEach(function (a) {
+        var ok = !termo || a.textContent.toLowerCase().indexOf(termo) >= 0;
+        a.hidden = !ok; algum = algum || ok;
+      });
+      g.hidden = !algum;
+      if (termo) g.open = algum;
+    });
   });
-});
+})();
 </script>
+{% endif %}
 </body></html>
