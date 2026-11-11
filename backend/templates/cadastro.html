@@ -1,0 +1,7 @@
+{% extends "base.html" %}{% block title %}Comece grátis · ApPdv{% endblock %}
+{% block content %}<section class="login-card"><p class="eyebrow">APPDV</p><h1>Comece grátis</h1>
+<p>Crie a conta da sua empresa e use tudo{% if dias_teste %} por {{ dias_teste }} dias sem pagar{% endif %}: painel de gestão, caixa web e o PDV para instalar no computador.</p>
+<form method="post">{% csrf_token %}{{ form.non_field_errors }}{% for field in form %}{% if field.is_hidden %}{{ field }}{% elif field.name == "aceite" %}<p><label>{{ field }} {{ field.label }}</label>{{ field.errors }}</p>{% else %}<p><label for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{{ field.errors }}</p>{% endif %}{% endfor %}
+<button class="primary full" type="submit">Criar minha conta</button></form>
+<p>Já tem conta? <a href="{% url 'login' %}">Entrar</a></p>
+</section>{% endblock %}
