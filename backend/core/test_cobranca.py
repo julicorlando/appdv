@@ -161,14 +161,14 @@ class MasterTests(Base):
         self.assertEqual(self.client.get("/master/cobranca/").status_code, 200)
         self.assertEqual(self.client.get(f"/master/empresas/{self.empresa.pk}/assinatura/").status_code, 200)
         self.client.post("/master/cobranca/planos/", {"nome": "Pro", "descricao": "", "valor_mensal": "199.90", "caixas_incluidos": "3",
-                                                     "valor_caixa_adicional": "25", "limite_usuarios": "0", "ordem": "1", "ativo": "on"})
+                                                     "valor_caixa_adicional": "25", "limite_usuarios": "0", "limite_caixas": "0", "ordem": "1", "ativo": "on"})
         self.assertTrue(Plano.objects.filter(nome="Pro").exists())
         self.client.post(f"/master/empresas/{self.empresa.pk}/assinatura/", {
             "acao": "salvar", "plano": self.plano.pk, "teste_ate": "", "isenta": "on", "isencao_ate": "", "motivo_isencao": "Parceiro",
             "dia_vencimento": "10", "carencia_dias": "", "valor_especial": "", "desconto_percentual": "0", "observacao": ""})
         self.assinatura.refresh_from_db()
         self.assertEqual((self.assinatura.estado, self.assinatura.motivo_isencao), ("ISENTA", "Parceiro"))
-        self.client.post("/master/cobranca/configuracao/", {"dias_teste": "30", "carencia_dias": "7", "dias_antecedencia": "10",
+        self.client.post("/master/cobranca/configuracao/", {"dias_teste": "30", "carencia_dias": "7", "dias_antecedencia": "10", "aviso_dias_antes": "3",
                                                             "plano_padrao": self.plano.pk, "mp_access_token": "APP_USR-x"})
         config = ConfiguracaoMaster.atual()
         self.assertEqual((config.dias_teste, config.mp_access_token), (30, "APP_USR-x"))
