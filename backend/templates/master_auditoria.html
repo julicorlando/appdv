@@ -1,0 +1,15 @@
+{% extends "base.html" %}{% block title %}Auditoria · Master{% endblock %}
+{% block content %}
+<div class="page-head"><div><p class="eyebrow">CONTROLE DA PLATAFORMA</p><h1>Auditoria</h1><p>Tudo o que foi registrado: entradas do Master nas empresas, cobrança, pagamentos, equipe, descontos e operações sensíveis.</p></div><span class="badge master">MASTER</span></div>
+<section class="panel"><form method="get" class="form-grid">
+<label>Empresa<select name="empresa"><option value="">Todas</option>{% for e in empresas %}<option value="{{ e.id }}" {% if filtros.empresa == e.id|stringformat:"s" %}selected{% endif %}>{{ e.nome }}</option>{% endfor %}</select></label>
+<label>Ação<input name="acao" value="{{ filtros.acao }}" list="acoes" placeholder="ex.: MASTER, FATURA, MEMBRO"><datalist id="acoes">{% for a in acoes %}<option value="{{ a }}">{% endfor %}</datalist></label>
+<label>Usuário<input name="usuario" value="{{ filtros.usuario }}"></label>
+<label>De<input type="date" name="de" value="{{ filtros.de }}"></label>
+<label>Até<input type="date" name="ate" value="{{ filtros.ate }}"></label>
+<button class="primary">Filtrar</button></form></section>
+<section class="panel table-wrap"><table><thead><tr><th>Quando</th><th>Empresa</th><th>Usuário</th><th>Ação</th><th>Referência</th><th>Detalhes</th></tr></thead><tbody>
+{% for e in pagina %}<tr><td>{{ e.criado_em|date:"d/m/Y H:i" }}</td><td>{{ e.empresa.nome }}</td><td>{{ e.usuario.username|default:"sistema" }}</td><td><b>{{ e.acao }}</b></td><td>{{ e.referencia }}</td><td><small>{% for k, v in e.detalhes.items %}{{ k }}: {{ v }}{% if not forloop.last %} · {% endif %}{% endfor %}</small></td></tr>
+{% empty %}<tr><td colspan="6">Nenhum registro com esses filtros.</td></tr>{% endfor %}</tbody></table>
+<p>{% if pagina.has_previous %}<a href="?{{ consulta }}&pagina={{ pagina.previous_page_number }}">← Anteriores</a>{% endif %} Página {{ pagina.number }} de {{ pagina.paginator.num_pages }} · {{ pagina.paginator.count }} registro(s) {% if pagina.has_next %}<a href="?{{ consulta }}&pagina={{ pagina.next_page_number }}">Próximos →</a>{% endif %}</p></section>
+{% endblock %}
