@@ -87,6 +87,28 @@ Todas as chamadas de negócio exigem JWT e `X-Empresa-ID`.
 - **Master com acesso total:** botão *Entrar* abre o painel de qualquer empresa como administrador (inclusive suspensa), com registro na auditoria.
 - Empresas existentes antes da cobrança ficam isentas até o master escolher o plano. Agende `python manage.py processar_cobranca` diariamente no Coolify (o sistema também roda o ciclo sozinho a cada hora).
 
+## Novidades: cobrança v2 e PDV 0.4.0
+
+**Master**
+- Avisos por e-mail (fatura gerada, perto do vencimento, vencida, suspensão e pagamento confirmado) para o e-mail da empresa e seus administradores/gerentes. Requer `EMAIL_HOST`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD` e `DEFAULT_FROM_EMAIL`.
+- Limites do plano: usuários ativos e caixas (computadores) — o caixa novo além do limite não é registrado.
+- Cadastro próprio com teste grátis em `/cadastro/` (ligue em Cobrança e planos › Regras), com cupom opcional.
+- A empresa troca de plano, aplica cupom e liga a cobrança automática no cartão (assinatura recorrente do Mercado Pago) na tela Assinatura do ApPdv.
+- Cupons (% por N mensalidades, validade e limite de usos), indicadores (receita recorrente, inadimplência, conversão do teste, cancelamentos, gráfico de 12 meses) e tela de Auditoria.
+- Webhook do Mercado Pago: cadastre o mesmo endereço para os eventos "Pagamentos" e "Planos e assinaturas".
+
+**Infraestrutura**
+- `python manage.py tarefas_diarias` (agende todo dia no Coolify): cobrança + backup. Com `BACKUP_S3_ENDPOINT`, `BACKUP_S3_BUCKET`, `BACKUP_S3_REGION`, `BACKUP_S3_ACCESS_KEY` e `BACKUP_S3_SECRET_KEY` a cópia também vai para um armazenamento S3 (Backblaze B2, Cloudflare R2, AWS…). Configure no bucket a regra de apagar cópias antigas.
+- `/saude/` responde 200 com o sistema e o banco no ar: use num monitor como o UptimeRobot.
+
+**PDV 0.4.0**
+- Aviso de assinatura suspensa; o caixa segue vendendo offline por 3 dias e depois bloqueia novas vendas até o pagamento.
+- Maquininha Mercado Pago Point: em Dados da empresa, liste e vincule a maquininha; no pagamento, "Cobrar cartão na maquininha".
+- Periféricos (botão no topo): gaveta de dinheiro (impressora do Windows, COM ou rede), balança Toledo/Filizola/Urano (lê o peso ao adicionar produto em KG) e etiqueta de balança EAN-13 com preço ou peso.
+- Vendas feitas sem internet: o cupom avisa que a NFC-e sai ao sincronizar, o PDV lista as NFC-e emitidas depois e alerta após 20 h offline (prazo de 24 h).
+- Antes de atualizar, o PDV copia os dados locais para a pasta `backups`.
+- Assinatura digital do instalador no CI: secrets `WINDOWS_CERT_PFX_BASE64` + `WINDOWS_CERT_PASSWORD` (certificado .pfx) ou `AZURE_SIGNING_ACCOUNT`, `AZURE_SIGNING_PROFILE`, `AZURE_SIGNING_ENDPOINT`, `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` (Azure Trusted Signing).
+
 ## PDV 0.3.1: funcionamento sem internet
 
 - **Login offline por 30 dias:** depois de entrar online uma vez no computador, o operador entra sem internet com a mesma senha (o PDV guarda só uma verificação PBKDF2, nunca a senha). Cada login online renova o prazo (`PDV_OFFLINE_DIAS`).
