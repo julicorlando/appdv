@@ -180,6 +180,15 @@ class ArmazemAPI:
     def pix_consultar(self, cobranca_id):
         return self._request('GET', f'/api/v1/pix/cobrancas/{int(cobranca_id)}/').json()
 
+    def point_criar(self, valor, tipo, chave):
+        return self._request('POST', '/api/v1/point/cobrancas/', json={'valor': str(valor), 'tipo': tipo, 'chave': chave}).json()
+
+    def point_consultar(self, intencao_id):
+        return self._request('GET', f'/api/v1/point/cobrancas/{intencao_id}/').json()
+
+    def point_cancelar(self, intencao_id):
+        return self._request('DELETE', f'/api/v1/point/cobrancas/{intencao_id}/').json()
+
     def nfce_emitir(self, venda_id):
         return self._request('POST', f'/api/v1/vendas/{int(venda_id)}/nfce/', json={}).json()
 
