@@ -15,6 +15,12 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
+    # Assinatura digital (opcional). Opção 1: certificado .pfx. Opção 2 (recomendada desde que os
+    # certificados de código passaram a exigir chave em HSM): Azure Trusted Signing.
+    env:
+      WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+      WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+      AZURE_SIGNING_ACCOUNT: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
     defaults:
       run:
         working-directory: pdv
@@ -39,11 +45,47 @@ jobs:
             echo "A tag ${GITHUB_REF_NAME} não bate com VERSION=${{ steps.versao.outputs.valor }} em pdv/app/__init__.py"; exit 1; }
       - name: Empacotar (PyInstaller)
         run: python -m PyInstaller --noconfirm --clean --onedir --windowed --name ApPdv --icon=assets\appdv-icon.ico --add-data "assets;assets" run_pdv.py
+      - name: Assinar o executável (.pfx)
+        if: env.WINDOWS_CERT_PFX_BASE64 != ''
+        shell: pwsh
+        run: ./installer/assinar.ps1 -Arquivos "dist\ApPdv\ApPdv.exe"
+      - name: Assinar o executável (Azure Trusted Signing)
+        if: env.AZURE_SIGNING_ACCOUNT != ''
+        uses: azure/trusted-signing-action@v2
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}\pdv\dist\ApPdv
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-digest: SHA256
       - name: Gerar instalador (Inno Setup)
         shell: pwsh
         run: |
           choco install innosetup --no-progress -y
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVer=${{ steps.versao.outputs.valor }}" installer\ApPdv.iss
+      - name: Assinar o instalador (.pfx)
+        if: env.WINDOWS_CERT_PFX_BASE64 != ''
+        shell: pwsh
+        run: ./installer/assinar.ps1 -Arquivos "dist\installer\ApPdv-Setup-${{ steps.versao.outputs.valor }}.exe"
+      - name: Assinar o instalador (Azure Trusted Signing)
+        if: env.AZURE_SIGNING_ACCOUNT != ''
+        uses: azure/trusted-signing-action@v2
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}\pdv\dist\installer
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-digest: SHA256
       - name: Nomes fixos e versão portátil
         shell: pwsh
         # Nomes sem versão para o link "releases/latest/download/..." do Painel Master nunca mudar.
